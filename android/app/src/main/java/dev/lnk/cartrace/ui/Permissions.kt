@@ -70,6 +70,15 @@ object Formatters {
         else -> null
     }
 
+    /** Boot counter text for the status screen: "desconocido (0)" when the system reports <= 0, "—" before the service starts. */
+    fun bootCount(n: Int?): String = when {
+        n == null -> "—"
+        n <= 0 -> "desconocido (0)"
+        else -> n.toString()
+    }
+
+    fun isBootCountSuspicious(n: Int?): Boolean = n != null && n <= 0
+
     fun isValidUrl(raw: String): Boolean {
         val u = raw.trim()
         if (u.isEmpty() || u.any { it.isWhitespace() }) return false

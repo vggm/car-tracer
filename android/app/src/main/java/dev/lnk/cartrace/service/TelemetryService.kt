@@ -69,7 +69,9 @@ class TelemetryService : Service() {
         super.onCreate()
         graph = AppGraph.get(this)
         Status.reset()
-        Log.i(TAG, "BOOT_COUNT=${graph.clocks.bootCount()} (must increase between ignition cycles)")
+        val bootCount = graph.clocks.bootCount()
+        Status.setBootCount(bootCount)
+        Log.i(TAG, "BOOT_COUNT=$bootCount (must increase between ignition cycles)")
         createChannel()
         if (!enterForeground()) {
             stopSelf()

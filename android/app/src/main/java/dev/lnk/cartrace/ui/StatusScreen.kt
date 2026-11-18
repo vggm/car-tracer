@@ -12,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.lnk.cartrace.obd.ObdState
@@ -25,6 +27,7 @@ fun StatusScreen() {
     val queue by Status.queueSize.collectAsStateWithLifecycle()
     val upload by Status.lastUpload.collectAsStateWithLifecycle()
     val dropped by Status.dropped.collectAsStateWithLifecycle()
+    val bootCount by Status.bootCount.collectAsStateWithLifecycle()
     val errors by Status.errors.collectAsStateWithLifecycle()
 
     Column(
@@ -50,15 +53,21 @@ fun StatusScreen() {
             upload?.let { (at, o) -> "${Formatters.time(at)} · ${Formatters.outcome(o)}" } ?: "Aún ninguna",
         )
         Line("Descartados (cola llena)", dropped.toString())
+        Line("Arranque nº", Formatters.bootCount(bootCount), warning = Formatters.isBootCountSuspicious(bootCount))
         Text("Últimos errores", style = MaterialTheme.typography.titleMedium)
         if (errors.isEmpty()) Text("Ninguno") else errors.asReversed().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }
 
 @Composable
-private fun Line(label: String, value: String) {
+private fun Line(label: String, value: String, warning: Boolean = false) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.titleMedium)
-        Text(value, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (warning) MaterialTheme.colorScheme.error else Color.Unspecified,
+            fontWeight = if (warning) FontWeight.Bold else null,
+        )
     }
 }
