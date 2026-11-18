@@ -31,3 +31,6 @@ captures/
 # OS
 .DS_Store
 Thumbs.db
+
+# Superpowers SDD workspaces
+.superpowers/
