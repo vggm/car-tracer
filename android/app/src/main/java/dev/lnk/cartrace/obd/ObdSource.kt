@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import android.util.Log
 import java.io.IOException
 import java.util.UUID
 
@@ -46,8 +47,9 @@ class ObdSource(
         while (true) {
             var connected = false
             var error: String
-            val transport = transportFactory()
+            var transport: ElmTransport? = null
             try {
+                transport = transportFactory()
                 _state.value = ObdState.Connecting
                 transport.open()
                 val protocol = initialize(transport)
@@ -63,13 +65,17 @@ class ObdSource(
                 throw e
             } catch (e: InitFailure) {
                 error = e.message ?: "init failed"
-                if (e.unableToConnect && ++unableCount % UNABLE_LIMIT == 0) send(Events.OBD_ERROR, error)
+                if (e.unableToConnect) {
+                    if (++unableCount == UNABLE_LIMIT) send(Events.OBD_ERROR, error)
+                } else {
+                    unableCount = 0
+                }
             } catch (e: Exception) {
                 error = e.message ?: e.javaClass.simpleName
                 if (e !is IOException) error = "${e.javaClass.simpleName}: $error"
                 unableCount = 0
             } finally {
-                transport.close()
+                transport?.close()
             }
             if (connected) send(Events.OBD_LOST, error)
             val wait = BACKOFF_MS[minOf(backoffIdx++, BACKOFF_MS.lastIndex)]
@@ -81,7 +87,6 @@ class ObdSource(
     private suspend fun initialize(t: ElmTransport): String {
         t.command("ATZ", LONG_TIMEOUT)
         for (c in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")) t.command(c)
-        val protocol = ElmParser.clean(t.command("ATDPN")).firstOrNull().orEmpty()
         supported = emptySet()
         var next: String? = "0100"
         val found = linkedSetOf<String>()
@@ -108,7 +113,8 @@ class ObdSource(
             }
         }
         supported = found
-        return protocol
+        // After the first OBD request, so ATSP0 has already resolved the protocol.
+        return ElmParser.clean(t.command("ATDPN")).firstOrNull().orEmpty()
     }
 
     private var supported: Set<String> = emptySet()
@@ -117,7 +123,7 @@ class ObdSource(
         val active = ElmParser.dtcs(t.command("03"), '3')
         val pending = ElmParser.dtcs(t.command("07"), '7')
         val s = sessionProvider()
-        emit(DtcRecord(newId(), s.id, s.nextSeq(), 0, active, pending), clocks.stamp())
+        safeEmit(DtcRecord(newId(), s.id, s.nextSeq(), 0, active, pending))
     }
 
     private suspend fun poll(t: ElmTransport) {
@@ -135,7 +141,7 @@ class ObdSource(
             if (now - lastEmit >= EMIT_EVERY_MS && fresh.isNotEmpty()) {
                 lastEmit = now
                 val s = sessionProvider()
-                emit(ObdRecord(newId(), s.id, s.nextSeq(), 0, fresh.toMap()), clocks.stamp())
+                safeEmit(ObdRecord(newId(), s.id, s.nextSeq(), 0, fresh.toMap()))
                 fresh.clear()
             }
             delay(cycleDelayMs)
@@ -144,7 +150,18 @@ class ObdSource(
 
     private suspend fun send(event: String, detail: String?) {
         val s = sessionProvider()
-        emit(EventRecord(newId(), s.id, s.nextSeq(), 0, event, detail), clocks.stamp())
+        safeEmit(EventRecord(newId(), s.id, s.nextSeq(), 0, event, detail))
+    }
+
+    /** Emit failures (queue/disk) must neither end the loop nor look like a link loss. */
+    private suspend fun safeEmit(record: Record) {
+        try {
+            emit(record, clocks.stamp())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            runCatching { Log.w("ObdSource", "emit failed, record dropped", e) }
+        }
     }
 
     private fun newId() = UUID.randomUUID().toString()

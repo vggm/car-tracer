@@ -1,6 +1,7 @@
 package dev.lnk.cartrace.sim
 
 import dev.lnk.cartrace.obd.ElmTransport
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -15,7 +16,7 @@ class FakeElmTransport(private val nowMs: () -> Long = System::currentTimeMillis
         val body = when (cmd.uppercase().replace(" ", "")) {
             "ATZ" -> "ELM327 v1.5"
             "ATDPN" -> "A6"
-            "ATRV" -> "%.1fV".format(13.8 - 0.4 * (0.5 + 0.5 * sin(t / 120 * 2 * PI)))
+            "ATRV" -> "%.1fV".format(Locale.US, 13.8 - 0.4 * (0.5 + 0.5 * sin(t / 120 * 2 * PI)))
             "0100" -> "41 00 18 38 80 01"
             "0120" -> "41 20 00 00 00 01"
             "0140" -> "41 40 00 00 00 00"
@@ -38,6 +39,6 @@ class FakeElmTransport(private val nowMs: () -> Long = System::currentTimeMillis
 
     override fun close() {}
 
-    private fun hex1(v: Int) = "%02X".format(v.coerceIn(0, 255))
-    private fun hex2(v: Int) = "%02X %02X".format((v shr 8) and 0xFF, v and 0xFF)
+    private fun hex1(v: Int) = "%02X".format(Locale.US, v.coerceIn(0, 255))
+    private fun hex2(v: Int) = "%02X %02X".format(Locale.US, (v shr 8) and 0xFF, v and 0xFF)
 }

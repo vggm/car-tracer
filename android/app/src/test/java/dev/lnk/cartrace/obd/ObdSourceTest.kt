@@ -80,7 +80,7 @@ class ObdSourceTest {
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(
-            listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "ATDPN", "0100", "0120", "0140"),
+            listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "0100", "0120", "0140", "ATDPN"),
             log.take(10),
         )
         assertEquals(ObdState.Connected("A6"), src.state.value)
@@ -184,10 +184,49 @@ class ObdSourceTest {
     }
 
     @Test
+    fun emitFailureDoesNotStopSource() = runTest {
+        var thrown = false
+        val src = ObdSource(
+            transportFactory = { ScriptedTransport(mutableListOf()) },
+            clocks = FakeClocks(),
+            emit = { r, _ ->
+                if (!thrown) { thrown = true; throw IllegalStateException("disk full") }
+                records += r
+            },
+            sessionProvider = { session },
+            nowMs = { currentTime },
+        )
+        val job = launch { src.run() }
+        advanceTimeBy(7_000)
+        assertTrue(thrown)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(records.filterIsInstance<ObdRecord>().isNotEmpty())
+        assertTrue(job.isActive)
+        job.cancel()
+    }
+
+    @Test
+    fun factoryThrowingKeepsRetrying() = runTest {
+        var calls = 0
+        val src = source {
+            if (calls++ == 0) throw IllegalStateException("boom")
+            ScriptedTransport(mutableListOf())
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Retrying)
+        advanceTimeBy(5_100)
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    @Test
     fun unableToConnectThreeTimesEmitsObdError() = runTest {
         val src = source { ScriptedTransport(mutableListOf(), on0100 = "UNABLE TO CONNECT\r\r>") }
         val job = launch { src.run() }
         advanceTimeBy(5_000 + 10_000 + 1_000)
+        assertEquals(1, events().count { it.event == Events.OBD_ERROR })
+        advanceTimeBy(20_000 + 40_000 + 80_000 + 1_000) // more failures: still just one obd_error
         val errs = events().filter { it.event == Events.OBD_ERROR }
         assertEquals(1, errs.size)
         assertTrue(errs[0].detail!!.contains("UNABLE TO CONNECT"))
