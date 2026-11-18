@@ -84,8 +84,14 @@ object ElmParser {
         null
     }
 
+    /** "BUS INIT: ...ERROR" is dropped by [clean] as noise, so it has to be detected on the raw text. */
+    fun isBusInitError(raw: String): Boolean =
+        raw.split('\r', '\n')
+            .map { it.filter { c -> !c.isWhitespace() }.uppercase() }
+            .any { it.startsWith("BUSINIT") && it.contains("ERROR") }
+
     fun isError(raw: String): Boolean =
-        clean(raw).any { line -> line == "?" || ERRORS.any { line.contains(it) } }
+        isBusInitError(raw) || clean(raw).any { line -> line == "?" || ERRORS.any { line.contains(it) } }
 
     private fun hexBytes(hex: String): List<Int>? {
         if (hex.length % 2 != 0) return null

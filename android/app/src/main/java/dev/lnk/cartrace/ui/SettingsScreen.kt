@@ -84,7 +84,8 @@ fun SettingsScreen() {
         OutlinedTextField(
             value = url,
             onValueChange = { url = it; urlError = false; saved = false },
-            label = { Text("URL del servidor") },
+            label = { Text("URL del servidor (ruta completa del ingest)") },
+            placeholder = { Text("https://lnk-server.<tailnet>.ts.net/api/v1/ingest") },
             isError = urlError,
             supportingText = { if (urlError) Text("La URL debe empezar por https:// o http://") },
             singleLine = true,

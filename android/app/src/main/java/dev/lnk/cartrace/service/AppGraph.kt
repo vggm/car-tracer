@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.room.Room
 import dev.lnk.cartrace.core.AndroidClocks
 import dev.lnk.cartrace.core.Clocks
+import dev.lnk.cartrace.core.OffsetRecorder
 import dev.lnk.cartrace.core.SessionClock
+import dev.lnk.cartrace.obd.PrefsProtocolStore
 import dev.lnk.cartrace.queue.AppDatabase
 import dev.lnk.cartrace.queue.RecordQueue
 import dev.lnk.cartrace.settings.AppSettings
@@ -19,6 +21,8 @@ class AppGraph private constructor(context: Context) {
     val sessionClock = SessionClock()
     val database: AppDatabase = Room.databaseBuilder(app, AppDatabase::class.java, "car-trace.db").build()
     val dao = database.queueDao()
+    val protocolStore = PrefsProtocolStore(app.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+    val offsetRecorder = OffsetRecorder(sessionClock) { dao.saveOffset(it) }
     val queue = RecordQueue(dao, sessionClock)
     val http: OkHttpClient = OkHttpClient()
 

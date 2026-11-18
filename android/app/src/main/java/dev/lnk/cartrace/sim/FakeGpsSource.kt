@@ -69,6 +69,7 @@ class FakeGpsSource(
             speedMps = speedKmh / 3.6,
             bearing = (bearing + 360.0) % 360.0,
             altM = 400.0,
+            simulated = true,
         )
     }
 

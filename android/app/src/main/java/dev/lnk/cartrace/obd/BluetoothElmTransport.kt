@@ -58,7 +58,7 @@ class BluetoothElmTransport(context: Context, private val address: String) : Elm
 
     override suspend fun command(cmd: String, timeoutMs: Long): String {
         val s = socket ?: throw IOException("not open")
-        return guarded(timeoutMs) {
+        return guarded(timeoutMs, cmd) {
             s.outputStream.write((cmd + "\r").toByteArray(Charsets.US_ASCII))
             s.outputStream.flush()
             readUntilPrompt(s.inputStream)
@@ -69,7 +69,7 @@ class BluetoothElmTransport(context: Context, private val address: String) : Elm
      * Runs a blocking socket call. BluetoothSocket reads/connects ignore Thread.interrupt, so a
      * watchdog closes the socket from outside: on timeout, or if the caller is cancelled.
      */
-    private suspend fun <T> guarded(timeoutMs: Long?, block: () -> T): T {
+    private suspend fun <T> guarded(timeoutMs: Long?, what: String? = null, block: () -> T): T {
         val timedOut = AtomicBoolean(false)
         val finished = AtomicBoolean(false)
         try {
@@ -95,7 +95,7 @@ class BluetoothElmTransport(context: Context, private val address: String) : Elm
                 }
             }
         } catch (e: IOException) {
-            if (timedOut.get()) throw IOException("timeout after ${timeoutMs}ms", e)
+            if (timedOut.get()) throw IOException("timeout after ${timeoutMs}ms" + (what?.let { " waiting for $it" } ?: ""), e)
             throw e
         }
     }

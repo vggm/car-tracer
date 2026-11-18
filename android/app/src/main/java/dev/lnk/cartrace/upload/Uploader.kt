@@ -8,6 +8,8 @@ import dev.lnk.cartrace.queue.RecordQueue
 import dev.lnk.cartrace.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -64,11 +66,14 @@ class Uploader(
                     val r = parse((outcome as HttpResult.Response).body)
                         ?: return UploadOutcome.Retry("unexpected response")
                     queue.remove(ready.rowIds.take(count))
-                    return UploadOutcome.Sent(r.accepted, r.duplicates, r.rejected.size)
+                    return UploadOutcome.Sent(r.accepted, r.duplicates, r.rejected.size, r.rejected.firstOrNull()?.error?.take(200))
                 }
                 UploadOutcomeKind.DISCARD -> {
+                    // Only our server answers {"error": ...}; any other 400 (a TLS port, a proxy) keeps the rows.
+                    val reason = serverError((outcome as HttpResult.Response).body)
+                        ?: return UploadOutcome.Retry("http $code")
                     queue.remove(ready.rowIds.take(count))
-                    return UploadOutcome.Discarded(code)
+                    return UploadOutcome.Discarded(code, reason.take(200))
                 }
                 UploadOutcomeKind.UNAUTHORIZED -> return UploadOutcome.Unauthorized
                 UploadOutcomeKind.RETRY -> return UploadOutcome.Retry("http $code")
@@ -82,6 +87,12 @@ class Uploader(
 
     private fun parse(body: String): IngestResponse? = try {
         ContractJson.decodeFromString(IngestResponse.serializer(), body)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun serverError(body: String): String? = try {
+        (ContractJson.parseToJsonElement(body) as? JsonObject)?.get("error")?.jsonPrimitive?.takeIf { it.isString }?.content
     } catch (e: Exception) {
         null
     }

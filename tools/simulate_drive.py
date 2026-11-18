@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import os
 import sys
 import time
 import urllib.error
@@ -60,13 +61,17 @@ def post(url, token, records):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--url", required=True)
-    p.add_argument("--token", required=True)
+    p.add_argument("--token", default=None,
+                   help="ingest token (default: env CAR_TRACE_INGEST_TOKEN; avoids shell history / ps)")
     p.add_argument("--minutes", type=float, default=10)
     p.add_argument("--batch", type=int, default=100)
     p.add_argument("--ago-min", type=float, default=0)
     p.add_argument("--repeat", action="store_true",
                    help="re-send the last batch at the end (expects all duplicates)")
     a = p.parse_args(argv)
+    token = a.token or os.environ.get("CAR_TRACE_INGEST_TOKEN")
+    if not token:
+        p.error("token required: pass --token or set CAR_TRACE_INGEST_TOKEN")
     if a.batch < 1:
         p.error("--batch must be >= 1")
 
@@ -77,7 +82,7 @@ def main(argv=None):
 
     ok = True
     for batch in batches:
-        status, text = post(a.url, a.token, batch)
+        status, text = post(a.url, token, batch)
         if status != 200:
             print("HTTP %d: %s" % (status, text))
             ok = False

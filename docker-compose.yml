@@ -9,7 +9,7 @@ services:
       CAR_TRACE_INGEST_TOKEN: ${CAR_TRACE_INGEST_TOKEN}
       CAR_TRACE_DB: /data/car-trace.db
     volumes:
-      - ./data:/data:Z
+      - ./data:/data:z
     userns_mode: "keep-id:uid=10001,gid=10001"
     restart: unless-stopped
 
@@ -23,6 +23,6 @@ services:
       CAR_TRACE_DB: /data/car-trace.db
       CAR_TRACE_TZ: Europe/Madrid
     volumes:
-      - ./data:/data:Z
+      - ./data:/data:z
     userns_mode: "keep-id:uid=10001,gid=10001"
     restart: unless-stopped

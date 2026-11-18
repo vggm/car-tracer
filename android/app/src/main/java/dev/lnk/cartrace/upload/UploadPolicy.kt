@@ -3,8 +3,14 @@ package dev.lnk.cartrace.upload
 enum class UploadOutcomeKind { SENT, DISCARD, UNAUTHORIZED, TOO_LARGE, RETRY }
 
 sealed interface UploadOutcome {
-    data class Sent(val accepted: Int, val duplicates: Int, val rejected: Int) : UploadOutcome
-    data class Discarded(val status: Int) : UploadOutcome
+    data class Sent(
+        val accepted: Int,
+        val duplicates: Int,
+        val rejected: Int,
+        /** Server error text of the first rejected record, if any. */
+        val firstError: String? = null,
+    ) : UploadOutcome
+    data class Discarded(val status: Int, val reason: String? = null) : UploadOutcome
     data object Unauthorized : UploadOutcome
     data object TooLarge : UploadOutcome
     data class Retry(val reason: String) : UploadOutcome

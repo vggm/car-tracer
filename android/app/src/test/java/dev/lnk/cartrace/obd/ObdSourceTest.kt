@@ -29,17 +29,24 @@ private class ScriptedTransport(
     val failAfter: Int = Int.MAX_VALUE,
     val openError: IOException? = null,
     val on0100: String = MASK_0100,
+    val dpn: String = "A6",
+    val failOnSp: String? = null,
+    val lostMessage: String = "link lost",
+    val timeouts: MutableMap<String, Long> = mutableMapOf(),
 ) : ElmTransport {
     var closed = false
     private var count = 0
+    private var lastSp = ""
     override suspend fun open() { openError?.let { throw it } }
     override suspend fun command(cmd: String, timeoutMs: Long): String {
-        if (count++ >= failAfter) throw IOException("link lost")
+        if (count++ >= failAfter) throw IOException(lostMessage)
         log += cmd
+        timeouts.putIfAbsent(cmd, timeoutMs)
+        if (cmd.startsWith("ATSP")) lastSp = cmd
         return when (cmd) {
             "ATZ" -> "ELM327 v1.5\r\r>"
-            "ATDPN" -> "A6\r\r>"
-            "0100" -> on0100
+            "ATDPN" -> "$dpn\r\r>"
+            "0100" -> if (lastSp == failOnSp) "UNABLE TO CONNECT\r\r>" else on0100
             "0120" -> MASK_0120
             "0140" -> MASK_0140
             "03" -> "43 01 33 00 00 00 00\r\r>"
@@ -232,6 +239,99 @@ class ObdSourceTest {
         assertTrue(errs[0].detail!!.contains("UNABLE TO CONNECT"))
         assertTrue(src.state.value is ObdState.Retrying)
         assertTrue(events().none { it.event == Events.OBD_CONNECTED })
+        job.cancel()
+    }
+
+    private class MemStore(val map: MutableMap<String, String> = mutableMapOf()) : ProtocolStore {
+        override fun get(address: String) = map[address]
+        override fun put(address: String, protocol: String) { map[address] = protocol }
+    }
+
+    private fun TestScope.sourceWith(store: ProtocolStore, factory: () -> ElmTransport) = ObdSource(
+        transportFactory = factory,
+        clocks = FakeClocks(),
+        emit = { r, _ -> records += r },
+        sessionProvider = { session },
+        nowMs = { currentTime },
+        protocolStore = store,
+        adapterAddress = "AA:BB",
+    )
+
+    @Test
+    fun storesProtocolFromAtdpnWithoutAutoPrefix() = runTest {
+        val store = MemStore()
+        val src = sourceWith(store) { ScriptedTransport(mutableListOf()) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals("6", store.get("AA:BB"))
+        assertEquals(ObdState.Connected("A6"), src.state.value)
+        job.cancel()
+    }
+
+    @Test
+    fun usesStoredProtocolInsteadOfAuto() = runTest {
+        val log = mutableListOf<String>()
+        val src = sourceWith(MemStore(mutableMapOf("AA:BB" to "6"))) { ScriptedTransport(log, dpn = "6") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(log.contains("ATSP6"))
+        assertFalse(log.contains("ATSP0"))
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    @Test
+    fun fallsBackToAutoWhenStoredProtocolFails() = runTest {
+        val log = mutableListOf<String>()
+        val store = MemStore(mutableMapOf("AA:BB" to "9"))
+        val src = sourceWith(store) { ScriptedTransport(log, failOnSp = "ATSP9") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.indexOf("ATSP9") in 0 until log.indexOf("ATSP0"))
+        assertEquals("6", store.get("AA:BB"))
+        job.cancel()
+    }
+
+    @Test
+    fun firstPidSearchGetsThirtySeconds() = runTest {
+        val timeouts = mutableMapOf<String, Long>()
+        val src = source { ScriptedTransport(mutableListOf(), timeouts = timeouts) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(30_000L, timeouts["0100"])
+        job.cancel()
+    }
+
+    @Test
+    fun emptyPidSearchIsInitFailure() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Retrying)
+        assertTrue(events().none { it.event == Events.OBD_CONNECTED })
+        advanceTimeBy(5_000 + 10_000 + 1_000)
+        assertEquals(1, events().count { it.event == Events.OBD_ERROR })
+        job.cancel()
+    }
+
+    @Test
+    fun busInitErrorIsInitFailure() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "BUS INIT: ...ERROR\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Retrying)
+        assertTrue(events().none { it.event == Events.OBD_CONNECTED })
+        job.cancel()
+    }
+
+    @Test
+    fun eventDetailTruncatedTo200() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), failAfter = 20, lostMessage = "x".repeat(500)) }
+        val job = launch { src.run() }
+        advanceTimeBy(500)
+        val lost = events().first { it.event == Events.OBD_LOST }
+        assertEquals(200, lost.detail!!.length)
         job.cancel()
     }
 }

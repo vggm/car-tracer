@@ -85,4 +85,10 @@ class ElmParserTest {
             ElmParser.clean("SEARCHING...\rBUS INIT: ...OK\r41 0C 1A F8\r\r>"),
         )
     }
+
+    @Test fun busInitErrorIsError() {
+        assertTrue(ElmParser.isError("BUS INIT: ...ERROR\r\r>"))
+        assertTrue(ElmParser.isError("BUS INIT: ERROR"))
+        assertFalse(ElmParser.isError("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
+    }
 }
