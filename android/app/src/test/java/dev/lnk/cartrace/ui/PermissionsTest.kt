@@ -101,4 +101,16 @@ class PermissionsTest {
         assertFalse(Formatters.isValidUrl("https://host\n/x"))
         assertTrue(Formatters.isValidUrl("https://example.com:8443/ingest?x=1"))
     }
+
+    @Test fun bootCountFormatting() {
+        assertEquals("42", Formatters.bootCount(42))
+        assertEquals("1", Formatters.bootCount(1))
+        assertEquals("desconocido (0)", Formatters.bootCount(0))
+        assertEquals("desconocido (0)", Formatters.bootCount(-1))
+        assertEquals("—", Formatters.bootCount(null))
+        assertFalse(Formatters.isBootCountSuspicious(42))
+        assertTrue(Formatters.isBootCountSuspicious(0))
+        assertTrue(Formatters.isBootCountSuspicious(-3))
+        assertFalse(Formatters.isBootCountSuspicious(null))
+    }
 }

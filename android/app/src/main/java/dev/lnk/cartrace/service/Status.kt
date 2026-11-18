@@ -19,6 +19,7 @@ object Status {
     private val _queueSize = MutableStateFlow(0)
     private val _lastUpload = MutableStateFlow<Pair<Long, UploadOutcome>?>(null)
     private val _dropped = MutableStateFlow(0)
+    private val _bootCount = MutableStateFlow<Int?>(null)
     private val _errors = MutableStateFlow<List<String>>(emptyList())
 
     val serviceRunning: StateFlow<Boolean> = _serviceRunning.asStateFlow()
@@ -27,6 +28,7 @@ object Status {
     val queueSize: StateFlow<Int> = _queueSize.asStateFlow()
     val lastUpload: StateFlow<Pair<Long, UploadOutcome>?> = _lastUpload.asStateFlow()
     val dropped: StateFlow<Int> = _dropped.asStateFlow()
+    val bootCount: StateFlow<Int?> = _bootCount.asStateFlow()
     val errors: StateFlow<List<String>> = _errors.asStateFlow()
 
     fun setServiceRunning(v: Boolean) { _serviceRunning.value = v }
@@ -40,6 +42,7 @@ object Status {
         Formatters.uploadError(outcome)?.let { addError(it) }
     }
 
+    fun setBootCount(v: Int) { _bootCount.value = v }
     fun setDropped(v: Int) { _dropped.value = v }
 
     fun addError(message: String) {
@@ -53,6 +56,7 @@ object Status {
         _queueSize.value = 0
         _lastUpload.value = null
         _dropped.value = 0
+        _bootCount.value = null
         _errors.value = emptyList()
     }
 }
