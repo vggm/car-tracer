@@ -225,6 +225,7 @@ class TelemetryService : Service() {
             emitEvent(fresh, Events.RESUMED, null)
         }
         session.set(fresh)
+        uploadLoop?.resetBackoff() // first upload after deep sleep must not wait out an old backoff
         restartObd()
     }
 
