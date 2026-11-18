@@ -14,8 +14,8 @@ abstract class QueueDao {
     @Query("SELECT COUNT(*) FROM pending")
     abstract suspend fun count(): Int
 
-    @Query("SELECT * FROM pending ORDER BY rowId ASC LIMIT :limit OFFSET :offset")
-    abstract suspend fun page(limit: Int, offset: Int): List<PendingRecord>
+    @Query("SELECT * FROM pending WHERE rowId > :afterRowId ORDER BY rowId ASC LIMIT :limit")
+    abstract suspend fun page(afterRowId: Long, limit: Int): List<PendingRecord>
 
     @Query("DELETE FROM pending WHERE rowId IN (:rowIds)")
     abstract suspend fun delete(rowIds: List<Long>)
