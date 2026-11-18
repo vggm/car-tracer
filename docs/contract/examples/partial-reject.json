@@ -1,0 +1,91 @@
+{
+  "description": "Siete registros: 3 validos, uno con ts del anio 2000 (indice 3), un gps con lat 91 (4), un dtc con codigo X1234 (5) y uno valido que repite el id del primero (6, duplicado).",
+  "request": {
+    "device_id": "junsun-307",
+    "app_version": "0.1.0",
+    "records": [
+      {
+        "id": "9eba17c7-2e17-4d2d-b8b7-00de3e360aed",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 0,
+        "ts": 1763481001000,
+        "type": "event",
+        "event": "session_start"
+      },
+      {
+        "id": "f5c1adf9-a9dc-43da-86e3-c977ae73ea63",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 1,
+        "ts": 1763481002000,
+        "type": "gps",
+        "lat": 40.4702,
+        "lon": -3.7722,
+        "acc_m": 6.0,
+        "speed_mps": 13.2,
+        "bearing": 270.0,
+        "alt_m": 410.0
+      },
+      {
+        "id": "ec138e70-0fe4-4b73-a49f-d34e0cc3fafd",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 2,
+        "ts": 1763481003000,
+        "type": "obd",
+        "values": {
+          "rpm": 1850,
+          "speed_kmh": 47,
+          "coolant_c": 88
+        }
+      },
+      {
+        "id": "87ef6968-d7cd-4f11-9bcf-cd2f9316d4ec",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 3,
+        "ts": 946684800000,
+        "type": "gps",
+        "lat": 40.4705,
+        "lon": -3.7718,
+        "acc_m": 7.0
+      },
+      {
+        "id": "d7724040-7d31-45d8-a153-f242b0279b47",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 4,
+        "ts": 1763481005000,
+        "type": "gps",
+        "lat": 91,
+        "lon": -3.7716,
+        "acc_m": 7.0
+      },
+      {
+        "id": "cd7840f9-65fa-4505-9efa-595b43537d21",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 5,
+        "ts": 1763481006000,
+        "type": "dtc",
+        "active": [
+          "X1234"
+        ],
+        "pending": []
+      },
+      {
+        "id": "9eba17c7-2e17-4d2d-b8b7-00de3e360aed",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 6,
+        "ts": 1763481007000,
+        "type": "event",
+        "event": "resumed"
+      }
+    ]
+  },
+  "expected_status": 200,
+  "expected": {
+    "accepted": 3,
+    "duplicates": 1,
+    "rejected_indexes": [
+      3,
+      4,
+      5
+    ]
+  }
+}
