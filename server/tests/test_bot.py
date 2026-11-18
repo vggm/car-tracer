@@ -172,3 +172,38 @@ def test_main_exits_1_without_token_or_chat():
                        capture_output=True, text=True, timeout=30)
     assert p.returncode == 1
     assert "CAR_TRACE_BOT_TOKEN" in p.stderr and "CHAT_ID" in p.stderr
+
+
+def test_logging_setup_keeps_token_out_of_logs(caplog):
+    import logging
+    marker = "TEST:FAKE-MARKER"
+    t = httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True, "result": []}))
+    root = logging.getLogger()
+    saved = (root.level, list(root.handlers), logging.getLogger("httpx").level,
+             logging.getLogger("httpcore").level)
+    try:
+        root.handlers.clear()
+        botmain.setup_logging()
+        caplog.set_level(logging.INFO)
+        TelegramClient(marker, httpx.Client(transport=t)).get_updates(None)
+        levels = (logging.getLogger("httpx").level, logging.getLogger("httpcore").level)
+    finally:
+        root.setLevel(saved[0])
+        root.handlers[:] = saved[1]
+        logging.getLogger("httpx").setLevel(saved[2])
+        logging.getLogger("httpcore").setLevel(saved[3])
+    assert levels == (logging.WARNING, logging.WARNING)
+    assert marker not in caplog.text
+
+
+def test_transport_error_is_wrapped_without_token():
+    marker = "TEST:FAKE-MARKER"
+
+    def boom(request):
+        raise httpx.ConnectError("failed", request=request)
+
+    c = TelegramClient(marker, httpx.Client(transport=httpx.MockTransport(boom)))
+    with pytest.raises(botmain.TelegramError) as ei:
+        c.send_message(CHAT, "hi")
+    assert marker not in str(ei.value)
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__

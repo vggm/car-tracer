@@ -21,6 +21,8 @@ class TelegramClient:
             body = resp.json()
         except httpx.HTTPStatusError as e:
             raise TelegramError(f"{method}: HTTP {e.response.status_code}") from None
+        except httpx.HTTPError as e:
+            raise TelegramError(f"{method}: {type(e).__name__}") from None
         except ValueError:
             raise TelegramError(f"{method}: invalid JSON") from None
         if not isinstance(body, dict) or not body.get("ok"):

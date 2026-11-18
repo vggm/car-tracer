@@ -39,8 +39,15 @@ def poll_loop(client, handler, sleep=time.sleep) -> None:
                 log.exception("error handling update %s", uid)
 
 
-def main() -> int:
+def setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # httpx logs full request URLs at INFO, and the URL contains the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def main() -> int:
+    setup_logging()
     settings = Settings.from_env()
     missing = [n for n, v in (("CAR_TRACE_BOT_TOKEN", settings.bot_token),
                               ("CHAT_ID", settings.chat_id)) if not v]
