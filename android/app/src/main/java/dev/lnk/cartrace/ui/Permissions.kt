@@ -53,12 +53,21 @@ object Permissions {
 
 object Formatters {
     fun outcome(o: UploadOutcome): String = when (o) {
-        is UploadOutcome.Sent -> "Enviado"
+        is UploadOutcome.Sent -> "Enviado · ${o.accepted}/${o.duplicates}/${o.rejected}"
         is UploadOutcome.Discarded -> "Descartado"
         UploadOutcome.Unauthorized -> "Token incorrecto"
         UploadOutcome.TooLarge -> "Reintentando: lote demasiado grande"
         is UploadOutcome.Retry -> "Reintentando: ${o.reason}"
         UploadOutcome.Idle -> "Sin datos"
+    }
+
+    /** Error-log line for outcomes that lose data (never contains the token); null otherwise. */
+    fun uploadError(o: UploadOutcome): String? = when (o) {
+        is UploadOutcome.Sent ->
+            if (o.rejected > 0) "Servidor rechazó ${o.rejected} registros" + (o.firstError?.let { ": $it" } ?: "") else null
+        is UploadOutcome.Discarded ->
+            "Lote descartado (HTTP ${o.status})" + (o.reason?.let { ": $it" } ?: "")
+        else -> null
     }
 
     fun isValidUrl(raw: String): Boolean {

@@ -80,11 +80,30 @@ class UploaderTest {
         assertEquals(1, queue.size())
     }
 
-    @Test fun discards400() = runTest {
+    @Test fun discards400WithServerErrorShape() = runTest {
         fill(2)
-        server.enqueue(MockResponse().setResponseCode(400))
-        assertEquals(UploadOutcome.Discarded(400), uploader.uploadOnce())
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":"bad batch"}"""))
+        assertEquals(UploadOutcome.Discarded(400, "bad batch"), uploader.uploadOnce())
         assertEquals(0, queue.size())
+    }
+
+    @Test fun keepsRowsOn400ThatIsNotOurServer() = runTest {
+        fill(2)
+        server.enqueue(MockResponse().setResponseCode(400).setBody("<html>The plain HTTP request was sent to HTTPS port</html>"))
+        assertEquals(UploadOutcome.Retry("http 400"), uploader.uploadOnce())
+        assertEquals(2, queue.size())
+        server.enqueue(MockResponse().setResponseCode(400))
+        assertEquals(UploadOutcome.Retry("http 400"), uploader.uploadOnce())
+        assertEquals(2, queue.size())
+    }
+
+    @Test fun sentCarriesFirstRejectedError() = runTest {
+        fill(2)
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"accepted":1,"duplicates":0,"rejected":[{"index":1,"id":"id2","error":"ts before 2024"},{"index":0,"error":"other"}]}"""),
+        )
+        assertEquals(UploadOutcome.Sent(1, 0, 2, "ts before 2024"), uploader.uploadOnce())
     }
 
     @Test fun keepsRowsOn401() = runTest {

@@ -49,7 +49,7 @@ fun StatusScreen() {
             "Última subida",
             upload?.let { (at, o) -> "${Formatters.time(at)} · ${Formatters.outcome(o)}" } ?: "Aún ninguna",
         )
-        Line("Descartados", dropped.toString())
+        Line("Descartados (cola llena)", dropped.toString())
         Text("Últimos errores", style = MaterialTheme.typography.titleMedium)
         if (errors.isEmpty()) Text("Ninguno") else errors.asReversed().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
     }

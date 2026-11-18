@@ -39,11 +39,24 @@ class PermissionsTest {
     }
 
     @Test fun outcomeTexts() {
-        assertEquals("Enviado", Formatters.outcome(UploadOutcome.Sent(1, 0, 0)))
+        assertEquals("Enviado · 1/0/0", Formatters.outcome(UploadOutcome.Sent(1, 0, 0)))
+        assertEquals("Enviado · 2/1/3", Formatters.outcome(UploadOutcome.Sent(2, 1, 3, "bad ts")))
         assertEquals("Descartado", Formatters.outcome(UploadOutcome.Discarded(400)))
         assertEquals("Token incorrecto", Formatters.outcome(UploadOutcome.Unauthorized))
         assertEquals("Reintentando: timeout", Formatters.outcome(UploadOutcome.Retry("timeout")))
         assertEquals("Sin datos", Formatters.outcome(UploadOutcome.Idle))
+    }
+
+    @Test fun uploadErrorTexts() {
+        assertEquals(null, Formatters.uploadError(UploadOutcome.Sent(1, 0, 0)))
+        assertEquals(null, Formatters.uploadError(UploadOutcome.Idle))
+        assertEquals(
+            "Servidor rechazó 3 registros: ts out of range",
+            Formatters.uploadError(UploadOutcome.Sent(5, 0, 3, "ts out of range")),
+        )
+        assertEquals("Servidor rechazó 1 registros", Formatters.uploadError(UploadOutcome.Sent(5, 0, 1)))
+        assertEquals("Lote descartado (HTTP 400): bad json", Formatters.uploadError(UploadOutcome.Discarded(400, "bad json")))
+        assertEquals("Lote descartado (HTTP 413)", Formatters.uploadError(UploadOutcome.Discarded(413)))
     }
 
     @Test fun urlValidation() {

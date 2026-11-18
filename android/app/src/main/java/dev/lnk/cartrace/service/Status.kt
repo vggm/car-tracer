@@ -2,6 +2,7 @@ package dev.lnk.cartrace.service
 
 import dev.lnk.cartrace.gps.GpsFix
 import dev.lnk.cartrace.obd.ObdState
+import dev.lnk.cartrace.ui.Formatters
 import dev.lnk.cartrace.upload.UploadOutcome
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +34,12 @@ object Status {
     fun setLastFix(v: GpsFix) { _lastFix.value = v }
     fun setQueueSize(v: Int) { _queueSize.value = v }
     fun setLastUpload(atMs: Long, outcome: UploadOutcome) { _lastUpload.value = atMs to outcome }
+    /** Stores the latest upload outcome and notes data loss (discarded batch, rejected records) in the errors. */
+    fun recordUpload(atMs: Long, outcome: UploadOutcome) {
+        setLastUpload(atMs, outcome)
+        Formatters.uploadError(outcome)?.let { addError(it) }
+    }
+
     fun setDropped(v: Int) { _dropped.value = v }
 
     fun addError(message: String) {

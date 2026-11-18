@@ -173,7 +173,7 @@ class TelemetryService : Service() {
             uploadOnce = { uploader.uploadOnce() },
             remaining = { graph.queue.size() },
             onOutcome = { o: UploadOutcome ->
-                Status.setLastUpload(System.currentTimeMillis(), o)
+                Status.recordUpload(System.currentTimeMillis(), o)
                 if (o is UploadOutcome.Unauthorized) Log.w(TAG, "upload rejected: 401")
             },
         )
