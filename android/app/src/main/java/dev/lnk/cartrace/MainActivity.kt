@@ -1,5 +1,9 @@
 package dev.lnk.cartrace
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -18,6 +22,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -56,19 +62,50 @@ private val RUNTIME_PERMISSIONS = listOf(
     Permissions.POST_NOTIFICATIONS,
 )
 
+private const val K_SKIPPED = "skipped_steps"
+
+private fun openWithFallbacks(ctx: Context, vararg intents: Intent) {
+    for (i in intents) {
+        try {
+            ctx.startActivity(i)
+            return
+        } catch (e: ActivityNotFoundException) {
+            // try the next fallback
+        } catch (e: SecurityException) {
+            // try the next fallback
+        }
+    }
+}
+
+private fun appDetails(ctx: Context) =
+    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+
 @Composable
 private fun App() {
     val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences(UI_PREFS, android.content.Context.MODE_PRIVATE) }
-    var tick by remember { mutableIntStateOf(0) }  // bump to recompute the onboarding step
+    val activity = remember { ctx.findActivity() }
+    val settings = remember { AppGraph.get(ctx).settings }
+    val prefs = remember { ctx.getSharedPreferences(UI_PREFS, Context.MODE_PRIVATE) }
+    var tick by remember { mutableIntStateOf(0) }  // bump to recompute onboarding state
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var denied by remember { mutableStateOf(setOf<String>()) }
+    var requested by remember { mutableStateOf<String?>(null) }
 
-    fun step(): OnboardingStep? {
-        val granted = RUNTIME_PERMISSIONS.filterTo(mutableSetOf()) {
+    val granted = remember(tick) {
+        RUNTIME_PERMISSIONS.filterTo(mutableSetOf()) {
             ctx.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
         }
-        if (prefs.getBoolean(K_AUTOSTART_SEEN, false)) granted += Permissions.AUTOSTART_SEEN
+    }
+    val skipped = remember(tick) {
+        prefs.getStringSet(K_SKIPPED, emptySet()).orEmpty().mapNotNull { n ->
+            OnboardingStep.entries.firstOrNull { it.name == n }
+        }.toSet()
+    }
+    val current = remember(tick) {
+        val g = granted.toMutableSet()
+        if (prefs.getBoolean(K_AUTOSTART_SEEN, false)) g += Permissions.AUTOSTART_SEEN
         val exempt = ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)
-        return Permissions.nextStep(granted, exempt)
+        Permissions.nextStep(g, exempt, skipped)
     }
 
     // Re-evaluate when returning from system settings screens.
@@ -79,31 +116,67 @@ private fun App() {
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
 
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
-    val current = remember(tick) { step() }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        val p = requested
+        if (!ok && p != null && activity != null && !activity.shouldShowRequestPermissionRationale(p)) {
+            denied = denied + p
+        }
+        tick++
+    }
 
-    if (current != null) {
-        OnboardingScreen(current) {
-            when (current) {
-                OnboardingStep.FINE_LOCATION -> launcher.launch(Permissions.FINE_LOCATION)
-                // Android 11+: the system sends the user to settings ("Permitir siempre").
-                OnboardingStep.BACKGROUND_LOCATION -> launcher.launch(Permissions.BACKGROUND_LOCATION)
-                OnboardingStep.BLUETOOTH_CONNECT -> launcher.launch(Permissions.BLUETOOTH_CONNECT)
-                OnboardingStep.POST_NOTIFICATIONS -> launcher.launch(Permissions.POST_NOTIFICATIONS)
-                OnboardingStep.BATTERY -> ctx.startActivity(
-                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")),
-                )
-                OnboardingStep.AUTOSTART_INFO -> {
-                    prefs.edit().putBoolean(K_AUTOSTART_SEEN, true).apply()
+    // The activity is visible here, so a location FGS may start (Android 14), but only with the required permissions.
+    val canStart = Permissions.canStartService(granted, settings.simulated)
+    LaunchedEffect(canStart) {
+        if (canStart) ctx.startForegroundService(Intent(ctx, TelemetryService::class.java))
+    }
+
+    when {
+        current == null -> Tabs()
+        showSettings -> Column(Modifier.statusBarsPadding()) {
+            TextButton(onClick = { showSettings = false }) { Text("Volver") }
+            SettingsScreen()
+        }
+        else -> OnboardingScreen(
+            step = current,
+            permanentlyDenied = Permissions.permissionFor(current)?.let { it in denied } == true,
+            onAction = {
+                val perm = Permissions.permissionFor(current)
+                when {
+                    perm != null -> {
+                        requested = perm
+                        launcher.launch(perm)
+                    }
+                    current == OnboardingStep.BATTERY -> openWithFallbacks(
+                        ctx,
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")),
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                        appDetails(ctx),
+                    )
+                    else -> {
+                        prefs.edit().putBoolean(K_AUTOSTART_SEEN, true).apply()
+                        tick++
+                    }
+                }
+            },
+            onOpenAppSettings = { openWithFallbacks(ctx, appDetails(ctx)) },
+            onSkip = if (current in Permissions.SKIPPABLE) {
+                {
+                    prefs.edit().putStringSet(K_SKIPPED, (skipped + current).map { it.name }.toSet()).apply()
                     tick++
                 }
-            }
-        }
-    } else {
-        // Onboarding done: the activity is visible, so a location FGS may start (Android 14).
-        LaunchedEffect(Unit) { ctx.startForegroundService(Intent(ctx, TelemetryService::class.java)) }
-        Tabs()
+            } else null,
+            onOpenSettings = { showSettings = true },
+        )
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var c = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 @Composable

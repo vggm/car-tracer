@@ -2,6 +2,14 @@ package dev.lnk.cartrace.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
@@ -33,7 +41,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.lnk.cartrace.service.AppGraph
 
-private data class Bonded(val name: String, val address: String)
+private data class Bonded(val name: String, val address: String, val paired: Boolean = true) {
+    val label get() = if (paired) "$name ($address)" else "$address (no emparejado)"
+}
 
 @SuppressLint("MissingPermission")
 private fun bondedDevices(ctx: Context): List<Bonded>? {
@@ -50,14 +60,22 @@ private fun bondedDevices(ctx: Context): List<Bonded>? {
 fun SettingsScreen() {
     val ctx = LocalContext.current
     val settings = remember { AppGraph.get(ctx).settings }
-    var url by remember { mutableStateOf(settings.serverUrl) }
-    var token by remember { mutableStateOf(settings.token) }
-    var showToken by remember { mutableStateOf(false) }
-    var adapter by remember { mutableStateOf(settings.adapterAddress) }
-    var simulated by remember { mutableStateOf(settings.simulated) }
-    var urlError by remember { mutableStateOf(false) }
+    var url by rememberSaveable { mutableStateOf(settings.serverUrl) }
+    var token by rememberSaveable { mutableStateOf(settings.token) }
+    var showToken by rememberSaveable { mutableStateOf(false) }
+    var adapter by rememberSaveable { mutableStateOf(settings.adapterAddress) }
+    var simulated by rememberSaveable { mutableStateOf(settings.simulated) }
+    var urlError by rememberSaveable { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
-    val devices = remember { bondedDevices(ctx) }
+    var refresh by remember { mutableIntStateOf(0) }
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh++ }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    val btLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
+    val devices = remember(refresh) { bondedDevices(ctx) }
 
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -83,15 +101,23 @@ fun SettingsScreen() {
         )
         Text("Adaptador OBD", style = MaterialTheme.typography.titleMedium)
         when {
-            devices == null -> Text("Falta el permiso de Bluetooth: concédelo para elegir el adaptador.")
-            devices.isEmpty() -> Text("No hay dispositivos Bluetooth emparejados.")
-            else -> devices.forEach { d ->
+            devices == null -> {
+                Text("Falta el permiso de Bluetooth: concédelo para elegir el adaptador.")
+                TextButton(onClick = { btLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT) }) { Text("Conceder Bluetooth") }
+            }
+            else -> {
+                if (devices.isEmpty()) Text("No hay dispositivos Bluetooth emparejados.")
+                val shown = if (adapter.isNotBlank() && devices.none { it.address == adapter }) {
+                    devices + Bonded(adapter, adapter, paired = false)
+                } else devices
+                shown.forEach { d ->
                 Row(
                     Modifier.fillMaxWidth().selectable(selected = adapter == d.address, onClick = { adapter = d.address; saved = false }),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = adapter == d.address, onClick = { adapter = d.address; saved = false })
-                    Text("${d.name} (${d.address})")
+                    Text(d.label)
+                }
                 }
             }
         }

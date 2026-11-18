@@ -53,4 +53,39 @@ class PermissionsTest {
         assertFalse(Formatters.isValidUrl("https://"))
         assertFalse(Formatters.isValidUrl(""))
     }
+
+    @Test fun skippedOptionalStepsAreSkipped() {
+        val base = all - Permissions.AUTOSTART_SEEN - Permissions.POST_NOTIFICATIONS
+        assertEquals(OnboardingStep.POST_NOTIFICATIONS, Permissions.nextStep(base, false))
+        assertEquals(
+            OnboardingStep.BATTERY,
+            Permissions.nextStep(base, false, setOf(OnboardingStep.POST_NOTIFICATIONS)),
+        )
+        assertEquals(
+            OnboardingStep.AUTOSTART_INFO,
+            Permissions.nextStep(base, false, setOf(OnboardingStep.POST_NOTIFICATIONS, OnboardingStep.BATTERY)),
+        )
+        assertNull(Permissions.nextStep(base, false, Permissions.SKIPPABLE))
+    }
+
+    @Test fun requiredStepsCannotBeSkipped() {
+        assertEquals(OnboardingStep.FINE_LOCATION, Permissions.nextStep(emptySet(), false, OnboardingStep.entries.toSet()))
+    }
+
+    @Test fun serviceStartRequirements() {
+        val loc = setOf(Permissions.FINE_LOCATION, Permissions.BACKGROUND_LOCATION)
+        assertFalse(Permissions.canStartService(loc, false))
+        assertTrue(Permissions.canStartService(loc, true))
+        assertTrue(Permissions.canStartService(loc + Permissions.BLUETOOTH_CONNECT, false))
+        assertFalse(Permissions.canStartService(setOf(Permissions.FINE_LOCATION), true))
+    }
+
+    @Test fun urlRejectsWhitespaceAndMissingHost() {
+        assertFalse(Formatters.isValidUrl("https://a b/x"))
+        assertFalse(Formatters.isValidUrl("http:///path"))
+        assertFalse(Formatters.isValidUrl("https://:8000/x"))
+        assertFalse(Formatters.isValidUrl("https:/host"))
+        assertFalse(Formatters.isValidUrl("https://host\n/x"))
+        assertTrue(Formatters.isValidUrl("https://example.com:8443/ingest?x=1"))
+    }
 }

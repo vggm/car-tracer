@@ -2,6 +2,8 @@ package dev.lnk.cartrace.ui
 
 import android.Manifest
 import dev.lnk.cartrace.upload.UploadOutcome
+import java.net.URI
+import java.net.URISyntaxException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -18,15 +20,35 @@ object Permissions {
     const val AUTOSTART_SEEN = "car-trace.AUTOSTART_SEEN"
 
     /** First pending onboarding step, or null when everything is done. [granted] holds granted permissions + AUTOSTART_SEEN. */
-    fun nextStep(granted: Set<String>, batteryExempt: Boolean): OnboardingStep? = when {
+    fun nextStep(
+        granted: Set<String>,
+        batteryExempt: Boolean,
+        skipped: Set<OnboardingStep> = emptySet(),
+    ): OnboardingStep? = when {
         FINE_LOCATION !in granted -> OnboardingStep.FINE_LOCATION
         BACKGROUND_LOCATION !in granted -> OnboardingStep.BACKGROUND_LOCATION
         BLUETOOTH_CONNECT !in granted -> OnboardingStep.BLUETOOTH_CONNECT
-        POST_NOTIFICATIONS !in granted -> OnboardingStep.POST_NOTIFICATIONS
-        !batteryExempt -> OnboardingStep.BATTERY
-        AUTOSTART_SEEN !in granted -> OnboardingStep.AUTOSTART_INFO
+        POST_NOTIFICATIONS !in granted && OnboardingStep.POST_NOTIFICATIONS !in skipped -> OnboardingStep.POST_NOTIFICATIONS
+        !batteryExempt && OnboardingStep.BATTERY !in skipped -> OnboardingStep.BATTERY
+        AUTOSTART_SEEN !in granted && OnboardingStep.AUTOSTART_INFO !in skipped -> OnboardingStep.AUTOSTART_INFO
         else -> null
     }
+
+    /** Steps the user may skip (optional for the service to run). */
+    val SKIPPABLE = setOf(OnboardingStep.POST_NOTIFICATIONS, OnboardingStep.BATTERY, OnboardingStep.AUTOSTART_INFO)
+
+    /** Runtime permission requested by a step, or null for non-permission steps. */
+    fun permissionFor(step: OnboardingStep): String? = when (step) {
+        OnboardingStep.FINE_LOCATION -> FINE_LOCATION
+        OnboardingStep.BACKGROUND_LOCATION -> BACKGROUND_LOCATION
+        OnboardingStep.BLUETOOTH_CONNECT -> BLUETOOTH_CONNECT
+        OnboardingStep.POST_NOTIFICATIONS -> POST_NOTIFICATIONS
+        else -> null
+    }
+
+    /** The service needs FINE + BACKGROUND location, and Bluetooth unless simulated. */
+    fun canStartService(granted: Set<String>, simulated: Boolean): Boolean =
+        FINE_LOCATION in granted && BACKGROUND_LOCATION in granted && (simulated || BLUETOOTH_CONNECT in granted)
 }
 
 object Formatters {
@@ -41,7 +63,13 @@ object Formatters {
 
     fun isValidUrl(raw: String): Boolean {
         val u = raw.trim()
-        return (u.startsWith("https://") && u.length > 8) || (u.startsWith("http://") && u.length > 7)
+        if (u.isEmpty() || u.any { it.isWhitespace() }) return false
+        return try {
+            val uri = URI(u)
+            (uri.scheme == "http" || uri.scheme == "https") && !uri.host.isNullOrEmpty()
+        } catch (e: URISyntaxException) {
+            false
+        }
     }
 
     fun time(ms: Long): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ms))
