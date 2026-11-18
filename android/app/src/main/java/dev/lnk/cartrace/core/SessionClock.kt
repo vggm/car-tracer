@@ -13,9 +13,13 @@ sealed interface Resolution {
 class SessionClock(private val minWallMs: Long = BuildConfig.BUILD_TIME_MS) {
     private val offsets = ConcurrentHashMap<Int, Long>()
 
-    /** Keeps the first offset (utc - elapsed) seen for each boot. */
-    fun onGpsFix(bootCount: Int, gpsUtcMs: Long, elapsedMs: Long) {
-        offsets.putIfAbsent(bootCount, gpsUtcMs - elapsedMs)
+    /**
+     * Keeps the first plausible offset (utc - elapsed) seen for each boot. Fixes earlier than
+     * [minWallMs] (GPS week rollover, bogus time) are ignored. True if this fix set the offset.
+     */
+    fun onGpsFix(bootCount: Int, gpsUtcMs: Long, elapsedMs: Long): Boolean {
+        if (gpsUtcMs < minWallMs) return false
+        return offsets.putIfAbsent(bootCount, gpsUtcMs - elapsedMs) == null
     }
 
     fun offsets(): Map<Int, Long> = offsets.toMap()

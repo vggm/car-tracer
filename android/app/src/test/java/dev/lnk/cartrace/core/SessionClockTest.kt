@@ -35,4 +35,19 @@ class SessionClockTest {
         c.onGpsFix(1, 1_800_000_999_000L, 2_000L)
         assertEquals(mapOf(1 to 1_799_999_999_000L), c.offsets())
     }
+
+    @Test fun implausibleGpsTimeIgnored() {
+        val c = SessionClock(min)
+        assertEquals(false, c.onGpsFix(1, min - 1, 1_000L))
+        assertEquals(emptyMap<Int, Long>(), c.offsets())
+        // a later good fix is still accepted (the bad one did not pin the boot)
+        assertEquals(true, c.onGpsFix(1, 1_800_000_000_000L, 1_000L))
+        assertEquals(mapOf(1 to 1_799_999_999_000L), c.offsets())
+    }
+
+    @Test fun onGpsFixReportsOnlyTheFirstAcceptedOffset() {
+        val c = SessionClock(min)
+        assertEquals(true, c.onGpsFix(1, 1_800_000_000_000L, 1_000L))
+        assertEquals(false, c.onGpsFix(1, 1_800_000_999_000L, 2_000L))
+    }
 }

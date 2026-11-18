@@ -36,11 +36,15 @@ class AndroidGpsSource(context: Context) : GpsSource {
         utcMs = time,
         lat = latitude,
         lon = longitude,
-        accM = if (hasAccuracy()) accuracy.toDouble() else 0.0,
+        accM = if (hasAccuracy()) accuracy.toDouble() else NO_ACCURACY_M,
         speedMps = if (hasSpeed()) speed.toDouble() else null,
         bearing = if (hasBearing()) bearing.toDouble() else null,
         altM = if (hasAltitude()) altitude else null,
     )
 
-    private companion object { const val TAG = "AndroidGpsSource" }
+    private companion object {
+        const val TAG = "AndroidGpsSource"
+        /** Unknown accuracy must not pass the <= 50 m filter of /donde. */
+        const val NO_ACCURACY_M = 9999.0
+    }
 }

@@ -8,6 +8,8 @@ data class GpsFix(
     val speedMps: Double?,
     val bearing: Double?,
     val altM: Double?,
+    /** True for fixes from FakeGpsSource: they must never set the boot time offset. */
+    val simulated: Boolean = false,
 )
 
 interface GpsSource {

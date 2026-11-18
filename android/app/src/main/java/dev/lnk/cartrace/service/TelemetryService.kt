@@ -12,6 +12,7 @@ import dev.lnk.cartrace.BuildConfig
 import dev.lnk.cartrace.contract.EventRecord
 import dev.lnk.cartrace.contract.Events
 import dev.lnk.cartrace.contract.GpsRecord
+import dev.lnk.cartrace.core.OffsetRecorder
 import dev.lnk.cartrace.core.Session
 import dev.lnk.cartrace.core.SleepDetector
 import dev.lnk.cartrace.core.Stamp
@@ -22,7 +23,6 @@ import dev.lnk.cartrace.gps.GpsSource
 import dev.lnk.cartrace.obd.BluetoothElmTransport
 import dev.lnk.cartrace.obd.ObdSource
 import dev.lnk.cartrace.obd.ObdState
-import dev.lnk.cartrace.queue.BootOffset
 import dev.lnk.cartrace.settings.SettingsSnapshot
 import dev.lnk.cartrace.sim.FakeElmTransport
 import dev.lnk.cartrace.sim.FakeGpsSource
@@ -69,6 +69,7 @@ class TelemetryService : Service() {
         super.onCreate()
         graph = AppGraph.get(this)
         Status.reset()
+        Log.i(TAG, "BOOT_COUNT=${graph.clocks.bootCount()} (must increase between ignition cycles)")
         createChannel()
         if (!enterForeground()) {
             stopSelf()
@@ -164,7 +165,7 @@ class TelemetryService : Service() {
             http = graph.http,
             appVersion = BuildConfig.VERSION_NAME,
             offsets = {
-                graph.sessionClock.offsets() + graph.dao.offsets().associate { it.bootCount to it.offsetMs }
+                OffsetRecorder.usablePersisted(graph.dao.offsets()) + graph.sessionClock.offsets()
             },
             currentBoot = { graph.clocks.bootCount() },
         )
@@ -239,8 +240,7 @@ class TelemetryService : Service() {
 
     private suspend fun handleFix(fix: GpsFix) {
         val stamp = graph.clocks.stamp()
-        graph.sessionClock.onGpsFix(stamp.bootCount, fix.utcMs, stamp.elapsedMs)
-        graph.dao.saveOffset(BootOffset(stamp.bootCount, fix.utcMs - stamp.elapsedMs))
+        graph.offsetRecorder.onFix(stamp.bootCount, fix.utcMs, stamp.elapsedMs, fix.simulated)
         Status.setLastFix(fix)
         val sess = session.get()
         graph.queue.add(
