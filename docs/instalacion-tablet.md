@@ -7,7 +7,7 @@ Guía para instalar Telemetría 307 en la radio del coche y validar el paso 2 de
 - El APK firmado: `telemetria-307-0.1.0.apk` (en `dist/` del repo y en la carpeta Descargas de Windows).
 - Un pendrive.
 - El token de recepción, que está en `~/server-apps/.env` de lnk-server. No lo copies a mano: en el paso 1 se lleva en un fichero.
-- La URL del servidor: `https://<servidor>.<tailnet>.ts.net/api/v1/ingest` (la ruta completa, con `/api/v1/ingest`).
+- La URL del servidor: `https://<servidor>.<tailnet>.ts.net/api/v1/ingest` (la ruta completa, con `/api/v1/ingest`; la tuya la muestra `tailscale funnel status` en el servidor).
 
 ## 1. Preparar el pendrive
 
@@ -44,7 +44,7 @@ Si deniegas un permiso por error y ya no vuelve a aparecer, la app ofrece **"Abr
 ## 4. Ajustes
 
 1. Abre **Ajustes** en la app.
-2. **URL del servidor:** `https://<servidor>.<tailnet>.ts.net/api/v1/ingest`.
+2. **URL del servidor:** la del paso 0.
 3. **Token:** abre `token.txt` desde el pendrive, cópialo y pégalo (el ojo muestra u oculta el texto para comprobarlo).
 4. Activa el **modo simulado**. El adaptador no hace falta en esta prueba.
 5. **Guardar.** Borra `token.txt` del pendrive y de la tablet.
@@ -56,7 +56,7 @@ Antes de empezar, abre en Telegram el bot del coche y mándale `/start` una vez.
 | # | Prueba | Se da por buena si… |
 | --- | --- | --- |
 | 1 | Con el contacto puesto, abre **Estado** | Servicio activo; "Último envío" pasa a **"Enviado · N/0/0"** en menos de un minuto; los pendientes bajan |
-| 2 | Manda `/donde` al bot | Responde **"🚗 En marcha · …"** y una chincheta cerca de Madrid (es la ruta simulada) |
+| 2 | Manda `/donde` al bot | Responde **"🚗 En marcha · …"** y una chincheta en el centro de Madrid (es la ruta simulada) |
 | 3 | Apunta el **"Arranque nº"** de Estado. Quita el contacto, espera 2 minutos y vuelve a ponerlo **sin tocar la tablet** | Aparece la notificación "Telemetría 307 activa"; en Estado el servicio está activo y **"Arranque nº" ha aumentado**; `/donde` vuelve a decir "En marcha" en un par de minutos |
 | 4 | Con el contacto quitado más de 5 minutos, manda `/donde` | Responde **"🅿️ Aparcado desde las HH:MM"** con la última posición |
 | 5 | Si la tablet suspende en vez de apagarse (vuelve al instante con lo que tenías abierto), deja el contacto quitado más de 1 minuto y vuelve | Los datos siguen llegando (lo compruebo en el servidor: debe aparecer una sesión nueva con el evento `resumed`) |
