@@ -70,10 +70,16 @@ def test_stored_row(client):
         "SELECT id, device_id, session_id, seq, ts, type, data, received_at "
         "FROM records WHERE type='event'"
     ).fetchone()
-    assert row[0] == req["records"][0]["id"]
-    assert row[1] == "junsun-307"
-    assert json.loads(row[6]) == {"event": "session_start"} or "event" in json.loads(row[6])
-    assert row[7] == 1763481600000
+    assert row == (
+        "4347dc96-113b-4b4e-aba8-bdcff7f6eda2",
+        "junsun-307",
+        "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        0,
+        1763481001000,
+        "event",
+        json.dumps({"event": "session_start", "detail": None}),
+        1763481600000,
+    )
 
 
 @pytest.mark.parametrize(
@@ -115,3 +121,34 @@ def test_rejected_entries_carry_index_id_and_error(client):
         assert set(entry) == {"index", "id", "error"}
         assert entry["id"] == case["request"]["records"][i].get("id")
         assert isinstance(entry["error"], str) and entry["error"]
+
+
+def test_huge_seq_rejects_only_that_record(client):
+    req = load("valid-mixed")["request"]
+    bad = {**req["records"][0], "seq": 2**63}
+    req = {**req, "records": [bad] + req["records"][1:]}
+    r = client.post("/api/v1/ingest", json=req, headers=HDR)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["accepted"] == 5 and [x["index"] for x in body["rejected"]] == [0]
+    assert count(client) == 5
+
+
+def test_non_object_records_rejected_individually(client):
+    req = load("valid-mixed")["request"]
+    recs = req["records"]
+    req = {**req, "records": [recs[0], 5, recs[1], None, "x", [1]]}
+    r = client.post("/api/v1/ingest", json=req, headers=HDR)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["accepted"] == 2 and body["duplicates"] == 0
+    assert [(x["index"], x["id"]) for x in body["rejected"]] == [
+        (1, None), (3, None), (4, None), (5, None)
+    ]
+    assert all(x["error"] for x in body["rejected"])
+
+
+def test_deeply_nested_json_is_400(client):
+    body = b"[" * 100000 + b"]" * 100000
+    assert len(body) <= LIMIT
+    assert client.post("/api/v1/ingest", content=body, headers=HDR).status_code == 400

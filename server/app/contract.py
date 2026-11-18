@@ -1,6 +1,6 @@
 """Pydantic models of ingest contract v1 (docs/contract/ingest-v1.md)."""
 import re
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 from uuid import UUID
 
 from pydantic import (
@@ -33,7 +33,7 @@ class RecordError(Exception):
 class Batch(BaseModel):
     device_id: str = Field(pattern=r"^[a-z0-9-]{1,64}$")
     app_version: str = Field(max_length=32)
-    records: list[dict] = Field(max_length=MAX_RECORDS)
+    records: list[Any] = Field(max_length=MAX_RECORDS)
 
 
 class _Base(BaseModel):
@@ -41,7 +41,7 @@ class _Base(BaseModel):
 
     id: UUID
     session_id: UUID
-    seq: Annotated[int, Field(strict=True, ge=0)]
+    seq: Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
     ts: Annotated[int, Field(strict=True)]
 
     def payload(self) -> dict:
@@ -89,7 +89,7 @@ _adapter: TypeAdapter[Record] = TypeAdapter(
 )
 
 
-def parse_record(raw: dict, now_ms: int) -> Record:
+def parse_record(raw: Any, now_ms: int) -> Record:
     try:
         rec = _adapter.validate_python(raw)
     except ValidationError as e:

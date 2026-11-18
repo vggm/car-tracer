@@ -49,7 +49,7 @@ async def ingest(request: Request):
 
     try:
         data = json.loads(bytes(body))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return _err(400, "body is not valid JSON")
     if not isinstance(data, dict):
         return _err(400, "body must be a JSON object")
@@ -65,7 +65,7 @@ async def ingest(request: Request):
         try:
             valid.append(parse_record(raw, now))
         except RecordError as e:
-            rejected.append({"index": i, "id": raw.get("id"), "error": str(e)})
+            rejected.append({"index": i, "id": raw.get("id") if isinstance(raw, dict) else None, "error": str(e)})
 
     with _write_lock:
         accepted, duplicates = insert_records(
