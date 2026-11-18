@@ -174,26 +174,36 @@ def test_main_exits_1_without_token_or_chat():
     assert "CAR_TRACE_BOT_TOKEN" in p.stderr and "CHAT_ID" in p.stderr
 
 
-def test_logging_setup_keeps_token_out_of_logs(caplog):
+def test_logging_setup_keeps_token_out_of_logs():
     import logging
+
+    class Collect(logging.Handler):
+        def __init__(self):
+            super().__init__(level=logging.NOTSET)
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
     marker = "TEST:FAKE-MARKER"
     t = httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True, "result": []}))
     root = logging.getLogger()
-    saved = (root.level, list(root.handlers), logging.getLogger("httpx").level,
-             logging.getLogger("httpcore").level)
+    names = ("httpx", "httpcore")
+    saved = (root.level, [logging.getLogger(n).level for n in names])
+    collect = Collect()
+    root.addHandler(collect)
     try:
-        root.handlers.clear()
+        root.setLevel(logging.INFO)  # what basicConfig(level=INFO) gives in production
         botmain.setup_logging()
-        caplog.set_level(logging.INFO)
         TelegramClient(marker, httpx.Client(transport=t)).get_updates(None)
-        levels = (logging.getLogger("httpx").level, logging.getLogger("httpcore").level)
+        levels = [logging.getLogger(n).level for n in names]
     finally:
+        root.removeHandler(collect)
         root.setLevel(saved[0])
-        root.handlers[:] = saved[1]
-        logging.getLogger("httpx").setLevel(saved[2])
-        logging.getLogger("httpcore").setLevel(saved[3])
-    assert levels == (logging.WARNING, logging.WARNING)
-    assert marker not in caplog.text
+        for n, lvl in zip(names, saved[1]):
+            logging.getLogger(n).setLevel(lvl)
+    assert levels == [logging.WARNING, logging.WARNING]
+    assert not any(marker in m for m in collect.messages)
 
 
 def test_transport_error_is_wrapped_without_token():
