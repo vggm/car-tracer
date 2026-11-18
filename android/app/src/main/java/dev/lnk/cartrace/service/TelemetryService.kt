@@ -208,6 +208,8 @@ class TelemetryService : Service() {
                 clocks = graph.clocks,
                 emit = { record, stamp -> graph.queue.add(record, stamp) },
                 sessionProvider = { session.get() },
+                protocolStore = graph.protocolStore,
+                adapterAddress = snap.adapterAddress,
             )
             coroutineScope {
                 launch { obd.state.collect { Status.setObd(it) } }
