@@ -20,8 +20,7 @@ object UploadPolicy {
         400 -> UploadOutcomeKind.DISCARD
         401 -> UploadOutcomeKind.UNAUTHORIZED
         413 -> UploadOutcomeKind.TOO_LARGE
-        408, 429, in 500..599 -> UploadOutcomeKind.RETRY
-        else -> UploadOutcomeKind.DISCARD
+        else -> UploadOutcomeKind.RETRY
     }
 
     fun nextDelayMs(failures: Int): Long {

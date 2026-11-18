@@ -15,7 +15,6 @@ class UploadPolicyTest {
         assertEquals(UploadOutcomeKind.DISCARD, UploadPolicy.classify(400))
         assertEquals(UploadOutcomeKind.UNAUTHORIZED, UploadPolicy.classify(401))
         assertEquals(UploadOutcomeKind.TOO_LARGE, UploadPolicy.classify(413))
-        for (c in listOf(408, 429, 500, 503, 599)) assertEquals(UploadOutcomeKind.RETRY, UploadPolicy.classify(c))
-        for (c in listOf(404, 403, 301, 422)) assertEquals(UploadOutcomeKind.DISCARD, UploadPolicy.classify(c))
+        for (c in listOf(408, 429, 500, 503, 599, 404, 405, 422, 403, 301, 302)) assertEquals(UploadOutcomeKind.RETRY, UploadPolicy.classify(c))
     }
 }

@@ -18,18 +18,20 @@ import java.io.IOException
 class Uploader(
     private val queue: RecordQueue,
     private val settings: AppSettings,
-    private val http: OkHttpClient,
+    http: OkHttpClient,
     private val appVersion: String,
     private val offsets: suspend () -> Map<Int, Long>,
     private val currentBoot: () -> Int,
 ) {
+    private val http: OkHttpClient = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
     suspend fun uploadOnce(maxRecords: Int = 500): UploadOutcome {
         val url = settings.serverUrl.trim()
-        val token = settings.token
+        val token = settings.token.trim()
         val deviceId = settings.deviceId
-        val ready = queue.nextBatch(maxRecords, offsets(), currentBoot())
-        if (ready.records.isEmpty()) return UploadOutcome.Idle
         if (url.isEmpty() || token.isEmpty()) return UploadOutcome.Retry("not configured")
+        val ready = queue.nextBatch(maxRecords.coerceIn(1, MAX_RECORDS), offsets(), currentBoot())
+        if (ready.records.isEmpty()) return UploadOutcome.Idle
         val request = try {
             Request.Builder().url(url)
         } catch (e: IllegalArgumentException) {
@@ -59,9 +61,10 @@ class Uploader(
                     body = encode(ready, count, deviceId)
                 }
                 UploadOutcomeKind.SENT -> {
-                    queue.remove(ready.rowIds.take(count))
                     val r = parse((outcome as HttpResult.Response).body)
-                    return UploadOutcome.Sent(r?.accepted ?: 0, r?.duplicates ?: 0, r?.rejected?.size ?: 0)
+                        ?: return UploadOutcome.Retry("unexpected response")
+                    queue.remove(ready.rowIds.take(count))
+                    return UploadOutcome.Sent(r.accepted, r.duplicates, r.rejected.size)
                 }
                 UploadOutcomeKind.DISCARD -> {
                     queue.remove(ready.rowIds.take(count))
@@ -90,10 +93,14 @@ class Uploader(
 
     private suspend fun post(builder: Request.Builder, token: String, body: ByteArray): HttpResult =
         withContext(Dispatchers.IO) {
-            val req = builder
-                .header("Authorization", "Bearer $token")
-                .post(body.toRequestBody(JSON))
-                .build()
+            val req = try {
+                builder
+                    .header("Authorization", "Bearer $token")
+                    .post(body.toRequestBody(JSON))
+                    .build()
+            } catch (e: IllegalArgumentException) {
+                return@withContext HttpResult.Failure("invalid token")
+            }
             try {
                 http.newCall(req).execute().use { HttpResult.Response(it.code, it.body.string()) }
             } catch (e: IOException) {
@@ -102,6 +109,7 @@ class Uploader(
         }
 
     companion object {
+        const val MAX_RECORDS = 500
         const val MAX_BODY_BYTES = 262_144
         private val JSON = "application/json".toMediaType()
     }

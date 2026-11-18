@@ -28,6 +28,8 @@ import org.robolectric.annotation.Config
 
 private const val FAKE_A = "fake-a"
 private const val FAKE_B = "fake-b"
+private const val BAD_CHARS = "ab\u0001c\u00e9"
+private const val PADDED = "abc\n"
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -106,11 +108,61 @@ class UploaderTest {
         assertEquals(2, queue.size())
     }
 
-    @Test fun nonJson200CountsAsSent() = runTest {
+    @Test fun nonJson200Retries() = runTest {
         fill(2)
         server.enqueue(MockResponse().setResponseCode(200).setBody("<html>ok</html>"))
-        assertEquals(UploadOutcome.Sent(0, 0, 0), uploader.uploadOnce())
-        assertEquals(0, queue.size())
+        assertEquals(UploadOutcome.Retry("unexpected response"), uploader.uploadOnce())
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        assertEquals(UploadOutcome.Retry("unexpected response"), uploader.uploadOnce())
+        assertEquals(2, queue.size())
+    }
+
+    @Test fun unknownCodesAndRedirectsKeepRows() = runTest {
+        fill(2)
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertTrue(uploader.uploadOnce() is UploadOutcome.Retry)
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/other").toString()))
+        assertTrue(uploader.uploadOnce() is UploadOutcome.Retry)
+        assertEquals(2, server.requestCount)
+        assertEquals(2, queue.size())
+    }
+
+    @Test fun notConfiguredDoesNotTouchQueue() = runTest {
+        queue.add(EventRecord("old", "s", 1, 0, "e"), Stamp(0, 1000L, 1_000L)) // unresolvable earlier boot
+        settings.apply { token = "" }
+        assertEquals(UploadOutcome.Retry("not configured"), uploader.uploadOnce())
+        assertEquals(0, server.requestCount)
+        assertEquals(1, queue.size())
+    }
+
+    @Test fun trimsTokenWhitespace() = runTest {
+        fill(1)
+        settings.apply { token = PADDED }
+        server.enqueue(ok())
+        assertTrue(uploader.uploadOnce() is UploadOutcome.Sent)
+        assertEquals("Bearer abc", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun invalidTokenCharsRetryWithoutCrash() = runTest {
+        fill(1)
+        settings.apply { token = BAD_CHARS }
+        assertEquals(UploadOutcome.Retry("invalid token"), uploader.uploadOnce())
+        assertEquals(0, server.requestCount)
+        assertEquals(1, queue.size())
+    }
+
+    @Test fun capsMaxRecordsAt500() = runTest {
+        fill(520)
+        var n = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                n = ContractJson.decodeFromString(Batch.serializer(), request.body.readUtf8()).records.size
+                return ok()
+            }
+        }
+        uploader.uploadOnce(10_000)
+        assertEquals(500, n)
+        assertEquals(20, queue.size())
     }
 
     @Test fun `408And429Retry`() = runTest {
