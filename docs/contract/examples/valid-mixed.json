@@ -1,0 +1,86 @@
+{
+  "description": "Seis registros validos de una misma sesion: event, dtc, dos gps (uno sin campos opcionales) y dos obd (uno con todas las claves conocidas y otro con la clave desconocida boost_extra).",
+  "request": {
+    "device_id": "junsun-307",
+    "app_version": "0.1.0",
+    "records": [
+      {
+        "id": "4347dc96-113b-4b4e-aba8-bdcff7f6eda2",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 0,
+        "ts": 1763481001000,
+        "type": "event",
+        "event": "session_start"
+      },
+      {
+        "id": "f1d84b76-6171-4fb6-8d46-149088b6b79d",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 1,
+        "ts": 1763481002000,
+        "type": "dtc",
+        "active": [
+          "P0401"
+        ],
+        "pending": []
+      },
+      {
+        "id": "2ec7d5d3-ea19-4a0e-97fb-72ca711326c4",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 2,
+        "ts": 1763481003000,
+        "type": "gps",
+        "lat": 40.4702,
+        "lon": -3.7722,
+        "acc_m": 6.0,
+        "speed_mps": 13.2,
+        "bearing": 270.0,
+        "alt_m": 410.0
+      },
+      {
+        "id": "9b8c1391-925c-4526-90c8-38b7416faab0",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 3,
+        "ts": 1763481004000,
+        "type": "gps",
+        "lat": 40.4709,
+        "lon": -3.7715,
+        "acc_m": 8.5
+      },
+      {
+        "id": "668cc40c-2167-4f9d-a036-223aae40388d",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 4,
+        "ts": 1763481005000,
+        "type": "obd",
+        "values": {
+          "rpm": 1850,
+          "speed_kmh": 47,
+          "coolant_c": 88,
+          "intake_kpa": 140,
+          "load_pct": 42,
+          "throttle_pct": 18.5,
+          "voltage_v": 13.8,
+          "fuel_rate_lph": 4.2
+        }
+      },
+      {
+        "id": "4e5d6e02-cb50-4ca5-87ee-8b114062489a",
+        "session_id": "5d3eb6a5-e4ec-4dad-85a8-7fb5ebfc5375",
+        "seq": 5,
+        "ts": 1763481006000,
+        "type": "obd",
+        "values": {
+          "rpm": 2100,
+          "speed_kmh": 52,
+          "boost_extra": 1.7
+        }
+      }
+    ]
+  },
+  "expected_status": 200,
+  "expected": {
+    "accepted": 6,
+    "duplicates": 0,
+    "rejected_indexes": []
+  }
+}

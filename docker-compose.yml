@@ -1,0 +1,28 @@
+services:
+  api:
+    build: ./server
+    container_name: car-trace-api
+    ports:
+      - "127.0.0.1:8090:8000"
+      - "<TAILSCALE_IP>:8090:8000"
+    environment:
+      CAR_TRACE_INGEST_TOKEN: ${CAR_TRACE_INGEST_TOKEN}
+      CAR_TRACE_DB: /data/car-trace.db
+    volumes:
+      - ./data:/data:z
+    userns_mode: "keep-id:uid=10001,gid=10001"
+    restart: unless-stopped
+
+  bot:
+    build: ./server
+    container_name: car-trace-bot
+    command: ["python", "-m", "app.bot"]
+    environment:
+      CAR_TRACE_BOT_TOKEN: ${CAR_TRACE_BOT_TOKEN}
+      CHAT_ID: ${CHAT_ID}
+      CAR_TRACE_DB: /data/car-trace.db
+      CAR_TRACE_TZ: Europe/Madrid
+    volumes:
+      - ./data:/data:z
+    userns_mode: "keep-id:uid=10001,gid=10001"
+    restart: unless-stopped

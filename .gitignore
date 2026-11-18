@@ -31,3 +31,9 @@ captures/
 # OS
 .DS_Store
 Thumbs.db
+
+# Superpowers SDD workspaces
+.superpowers/
+
+# Local compose override
+docker-compose.override.yml
