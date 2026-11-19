@@ -37,3 +37,6 @@ Thumbs.db
 
 # Local compose override
 docker-compose.override.yml
+
+# Superpowers specs and plans (kept local, not published)
+docs/superpowers/
