@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 MAX_ACC_M = 50.0
 MAX_SPEED_MPS = 70.0
 MOVING_WINDOW_MS = 300_000
+MOVING_MIN_KMH = 5.0
 GPS_GAP_MS = 120_000
 OBD_WINDOW_MS = 60_000
 GPS_CANDIDATES = 50
@@ -26,7 +27,7 @@ class GpsPoint:
 
 @dataclass(frozen=True)
 class CarStatus:
-    state: Literal["moving", "parked", "no_data"]
+    state: Literal["moving", "idle", "parked", "no_data"]
     last_ts: int | None
     point: GpsPoint | None
     speed_kmh: float | None
@@ -96,8 +97,14 @@ def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
             continue
         points.append(GpsPoint(ts, d["lat"], d["lon"], d["acc_m"], d.get("speed_mps")))
     point = last_valid_point(points)
-    state = "moving" if now_ms - last_ts < MOVING_WINDOW_MS else "parked"
-    return CarStatus(state, last_ts, point, _speed_kmh(conn, last_ts, point))
+    speed = _speed_kmh(conn, last_ts, point)
+    if now_ms - last_ts >= MOVING_WINDOW_MS:
+        state = "parked"
+    elif speed is not None and speed >= MOVING_MIN_KMH:
+        state = "moving"
+    else:
+        state = "idle"
+    return CarStatus(state, last_ts, point, speed)
 
 
 def _rel(delta_ms: int) -> str:
@@ -121,6 +128,8 @@ def format_status(status: CarStatus, now_ms: int, tz: str) -> str:
         text = f"🚗 En marcha · último dato hace {rel}"
         if status.speed_kmh is not None:
             text += f" · {round(status.speed_kmh)} km/h"
+    elif status.state == "idle":
+        text = f"⏸️ Parado con el contacto puesto · último dato hace {rel}"
     else:
         text = f"🅿️ Aparcado desde las {_hhmm(status.last_ts, tz)} (hace {rel})"
         if status.point is not None and status.last_ts - status.point.ts > GPS_GAP_MS:
