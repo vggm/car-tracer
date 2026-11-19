@@ -1,6 +1,6 @@
 # Instalación en la tablet (Junsun) y prueba en modo simulado
 
-Guía para instalar Telemetría 307 en la radio del coche y validar el paso 2 de la hoja de ruta: la app arranca sola, envía datos simulados y `/donde` los refleja. No hace falta el ELM327 ni conducir.
+Guía para instalar Telemetría 307 en la radio del coche y validarla: la app arranca sola, envía datos simulados y `/donde` los refleja. No hace falta el ELM327 ni conducir.
 
 ## 0. Lo que necesitas
 
@@ -49,7 +49,7 @@ Si deniegas un permiso por error y ya no vuelve a aparecer, la app ofrece **"Abr
 4. Activa el **modo simulado**. El adaptador no hace falta en esta prueba.
 5. **Guardar.** Borra `token.txt` del pendrive y de la tablet.
 
-## 5. Pruebas (paso 2 de la hoja de ruta)
+## 5. Pruebas
 
 Antes de empezar, abre en Telegram el bot del coche y mándale `/start` una vez.
 
@@ -66,7 +66,7 @@ Antes de empezar, abre en Telegram el bot del coche y mándale `/start` una vez.
 
 - El "Arranque nº" antes y después de la prueba 3.
 - Lo que ponga en "Último envío" y en "Errores" de la pantalla Estado si algo falla (una foto vale).
-- Si la app **no arranca sola** en la prueba 3, dime qué mensaje o notificación ves y lo investigamos con `adb logcat` (paso 4 del plan B10).
+- Si la app **no arranca sola** en la prueba 3, dime qué mensaje o notificación ves y lo investigamos con `adb logcat`.
 
 ### Sobre el "Arranque nº"
 
@@ -89,4 +89,4 @@ La app identifica cada arranque con `Settings.Global.BOOT_COUNT`:
 
 ## 7. Después de la prueba
 
-No desactives todavía el modo simulado. Cuando vayamos al coche (paso 3, B11), borraré en el servidor los datos simulados, elegirás el ELM327 en Ajustes y desactivarás el modo simulado.
+No desactives todavía el modo simulado. Cuando hagamos la prueba en el coche con el ELM327, borraré en el servidor los datos simulados, elegirás el ELM327 en Ajustes y desactivarás el modo simulado.
