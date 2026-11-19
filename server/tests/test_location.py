@@ -155,11 +155,11 @@ def test_format_moving():
 def test_format_idle():
     st = CarStatus("idle", ms(12, 0), P(ms(12, 0)), 0.0)
     assert format_status(st, ms(12, 0, 20), TZ) == (
-        "⏸️ Parado con el contacto puesto · último dato hace 20 s"
+        "⏸️ Parado pero encendido · último dato hace 20 s"
     )
     st = CarStatus("idle", ms(12, 0), None, None)
     assert format_status(st, ms(12, 0, 20), TZ) == (
-        "⏸️ Parado con el contacto puesto · último dato hace 20 s\nSin posición GPS todavía."
+        "⏸️ Parado pero encendido · último dato hace 20 s\nSin posición GPS todavía."
     )
 
 

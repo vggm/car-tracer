@@ -129,7 +129,7 @@ def format_status(status: CarStatus, now_ms: int, tz: str) -> str:
         if status.speed_kmh is not None:
             text += f" · {round(status.speed_kmh)} km/h"
     elif status.state == "idle":
-        text = f"⏸️ Parado con el contacto puesto · último dato hace {rel}"
+        text = f"⏸️ Parado pero encendido · último dato hace {rel}"
     else:
         text = f"🅿️ Aparcado desde las {_hhmm(status.last_ts, tz)} (hace {rel})"
         if status.point is not None and status.last_ts - status.point.ts > GPS_GAP_MS:
