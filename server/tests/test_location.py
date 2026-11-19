@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from app import db
 from app.location import (
+    MOVING_MIN_KMH,
     CarStatus,
     GpsPoint,
     car_status,
@@ -74,6 +75,34 @@ def test_moving_when_recent(tmp_path):
     assert st.speed_kmh == 36.0
 
 
+def test_idle_when_recent_with_zero_gps_speed(tmp_path):
+    c = _conn(tmp_path)
+    gps(c, 1_000_000, speed=0.0)
+    st = car_status(c, 1_000_000 + 10_000)
+    assert st.state == "idle"
+    assert st.speed_kmh == 0.0
+
+
+def test_idle_when_recent_with_no_speed(tmp_path):
+    c = _conn(tmp_path)
+    gps(c, 1_000_000, speed=None)
+    st = car_status(c, 1_000_000 + 10_000)
+    assert st.state == "idle"
+    assert st.speed_kmh is None
+
+
+def test_moving_at_exact_threshold(tmp_path):
+    c = _conn(tmp_path)
+    add(c, 1_000_000, "obd", {"values": {"speed_kmh": MOVING_MIN_KMH}})
+    assert car_status(c, 1_010_000).state == "moving"
+
+
+def test_idle_just_below_threshold(tmp_path):
+    c = _conn(tmp_path)
+    add(c, 1_000_000, "obd", {"values": {"speed_kmh": 4.9}})
+    assert car_status(c, 1_010_000).state == "idle"
+
+
 def test_parked_after_five_minutes(tmp_path):
     c = _conn(tmp_path)
     gps(c, 1_000_000)
@@ -94,7 +123,7 @@ def test_status_without_valid_gps(tmp_path):
     gps(c, 1_000_000, lat=0.0, lon=0.0)
     add(c, 1_001_000, "obd", {"values": {"rpm": 800}})
     st = car_status(c, 1_002_000)
-    assert st.state == "moving" and st.point is None and st.last_ts == 1_001_000
+    assert st.state == "idle" and st.point is None and st.last_ts == 1_001_000
     assert st.speed_kmh is None
     assert format_status(st, 1_002_000, TZ).endswith("\nSin posición GPS todavía.")
 
@@ -121,6 +150,17 @@ def test_format_moving():
     assert format_status(st, ms(12, 0, 20), TZ) == "🚗 En marcha · último dato hace 20 s · 47 km/h"
     st = CarStatus("moving", ms(12, 0), P(ms(12, 0)), None)
     assert format_status(st, ms(12, 0, 20), TZ) == "🚗 En marcha · último dato hace 20 s"
+
+
+def test_format_idle():
+    st = CarStatus("idle", ms(12, 0), P(ms(12, 0)), 0.0)
+    assert format_status(st, ms(12, 0, 20), TZ) == (
+        "⏸️ Parado con el contacto puesto · último dato hace 20 s"
+    )
+    st = CarStatus("idle", ms(12, 0), None, None)
+    assert format_status(st, ms(12, 0, 20), TZ) == (
+        "⏸️ Parado con el contacto puesto · último dato hace 20 s\nSin posición GPS todavía."
+    )
 
 
 def test_relative_time_buckets():
