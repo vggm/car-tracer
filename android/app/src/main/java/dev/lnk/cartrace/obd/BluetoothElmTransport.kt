@@ -26,6 +26,17 @@ internal fun readUntilPrompt(input: InputStream): String {
     }
 }
 
+/**
+ * Cancels discovery as a connect-speed optimisation. cancelDiscovery needs BLUETOOTH_SCAN on API 31+,
+ * which the app does not declare (it never starts discovery), so a SecurityException is ignored.
+ */
+internal fun cancelDiscoveryBestEffort(cancel: () -> Boolean): Boolean =
+    try {
+        cancel()
+    } catch (_: SecurityException) {
+        false
+    }
+
 /** Classic Bluetooth SPP transport. Needs BLUETOOTH_CONNECT granted at runtime. */
 @SuppressLint("MissingPermission")
 class BluetoothElmTransport(context: Context, private val address: String) : ElmTransport {
@@ -41,12 +52,12 @@ class BluetoothElmTransport(context: Context, private val address: String) : Elm
                 if (!adapter.isEnabled) throw IOException("bluetooth disabled")
                 val s = adapter.getRemoteDevice(address).createRfcommSocketToServiceRecord(SPP_UUID)
                 socket = s
-                adapter.cancelDiscovery()
+                cancelDiscoveryBestEffort { adapter.cancelDiscovery() }
                 s.connect()
             }
         } catch (e: SecurityException) {
             close()
-            throw IOException("missing BLUETOOTH_CONNECT permission", e)
+            throw IOException("bluetooth permission denied: ${e.message}", e)
         } catch (e: IllegalArgumentException) {
             close()
             throw IOException("invalid address $address", e)
