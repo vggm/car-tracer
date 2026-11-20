@@ -75,19 +75,19 @@ def test_moving_when_recent(tmp_path):
     assert st.speed_kmh == 36.0
 
 
-def test_idle_when_recent_with_zero_gps_speed(tmp_path):
+def test_stopped_when_recent_with_zero_gps_speed(tmp_path):
     c = _conn(tmp_path)
     gps(c, 1_000_000, speed=0.0)
     st = car_status(c, 1_000_000 + 10_000)
-    assert st.state == "idle"
+    assert st.state == "stopped"
     assert st.speed_kmh == 0.0
 
 
-def test_idle_when_recent_with_no_speed(tmp_path):
+def test_stopped_when_recent_with_no_speed(tmp_path):
     c = _conn(tmp_path)
     gps(c, 1_000_000, speed=None)
     st = car_status(c, 1_000_000 + 10_000)
-    assert st.state == "idle"
+    assert st.state == "stopped"
     assert st.speed_kmh is None
 
 
@@ -97,9 +97,15 @@ def test_moving_at_exact_threshold(tmp_path):
     assert car_status(c, 1_010_000).state == "moving"
 
 
-def test_idle_just_below_threshold(tmp_path):
+def test_stopped_just_below_threshold(tmp_path):
     c = _conn(tmp_path)
     add(c, 1_000_000, "obd", {"values": {"speed_kmh": 4.9}})
+    assert car_status(c, 1_010_000).state == "stopped"
+
+
+def test_idle_just_below_threshold_with_engine_on(tmp_path):
+    c = _conn(tmp_path)
+    add(c, 1_000_000, "obd", {"values": {"speed_kmh": 4.9, "rpm": 800}})
     assert car_status(c, 1_010_000).state == "idle"
 
 
@@ -126,6 +132,109 @@ def test_status_without_valid_gps(tmp_path):
     assert st.state == "idle" and st.point is None and st.last_ts == 1_001_000
     assert st.speed_kmh is None
     assert format_status(st, 1_002_000, TZ).endswith("\nSin posición GPS todavía.")
+
+
+def obd(conn, ts, **values):
+    add(conn, ts, "obd", {"values": values})
+
+
+def test_engine_on_from_rpm(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=800, speed_kmh=0)
+    st = car_status(c, 1_010_000)
+    assert st.state == "idle" and st.engine_on is True
+
+
+def test_engine_off_from_rpm_zero(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=0, speed_kmh=0)
+    st = car_status(c, 1_010_000)
+    assert st.state == "engine_off" and st.engine_on is False
+
+
+def test_rpm_takes_precedence_over_voltage(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 990_000, voltage_v=14.2)
+    obd(c, 1_000_000, rpm=0)
+    st = car_status(c, 1_010_000)
+    assert st.engine_on is False and st.state == "engine_off"
+
+
+def test_rpm_precedence_engine_on_with_low_voltage(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 990_000, voltage_v=12.0)
+    obd(c, 1_000_000, rpm=700)
+    assert car_status(c, 1_010_000).engine_on is True
+
+
+def test_voltage_threshold_boundary(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, voltage_v=13.2)
+    assert car_status(c, 1_010_000).engine_on is True
+    c2 = db.connect(str(tmp_path / "t2.db"))
+    obd(c2, 1_000_000, voltage_v=13.19)
+    st = car_status(c2, 1_010_000)
+    assert st.engine_on is False and st.state == "engine_off"
+
+
+def test_voltage_used_when_no_rpm_in_window(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 900_000, voltage_v=14.0)  # 100 s before last_ts: outside rpm window, inside voltage
+    obd(c, 1_000_000, speed_kmh=0)
+    assert car_status(c, 1_010_000).engine_on is True
+
+
+def test_voltage_older_than_180s_ignored(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 800_000, voltage_v=14.0)  # 200 s before last_ts
+    obd(c, 1_000_000, speed_kmh=0)
+    st = car_status(c, 1_010_000)
+    assert st.engine_on is None and st.state == "stopped"
+
+
+def test_rpm_older_than_60s_ignored(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 930_000, rpm=800)  # 70 s before last_ts
+    gps(c, 1_000_000, speed=0.0)
+    st = car_status(c, 1_010_000)
+    assert st.engine_on is None and st.state == "stopped"
+
+
+def test_engine_none_without_obd(tmp_path):
+    c = _conn(tmp_path)
+    gps(c, 1_000_000)
+    assert car_status(c, 1_010_000).engine_on is None
+
+
+def test_moving_wins_over_engine_off(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=0, speed_kmh=30)
+    assert car_status(c, 1_010_000).state == "moving"
+
+
+def test_no_signal_when_stale_and_last_speed_moving(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=2000, speed_kmh=60)
+    st = car_status(c, 1_000_000 + 300_000)
+    assert st.state == "no_signal" and st.speed_kmh == 60
+
+
+def test_no_signal_uses_gps_speed_fallback(tmp_path):
+    c = _conn(tmp_path)
+    gps(c, 1_000_000, speed=10.0)
+    assert car_status(c, 1_400_000).state == "no_signal"
+
+
+def test_parked_when_stale_and_slow(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=0, speed_kmh=0)
+    assert car_status(c, 1_400_000).state == "parked"
+
+
+def test_parked_when_stale_without_speed(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, 1_000_000, rpm=800)
+    assert car_status(c, 1_400_000).state == "parked"
 
 
 def ms(h, m, s=0):
@@ -160,6 +269,35 @@ def test_format_idle():
     st = CarStatus("idle", ms(12, 0), None, None)
     assert format_status(st, ms(12, 0, 20), TZ) == (
         "⏸️ Parado pero encendido · último dato hace 20 s\nSin posición GPS todavía."
+    )
+
+
+def test_format_engine_off():
+    st = CarStatus("engine_off", ms(12, 0), P(ms(12, 0)), 0.0, False)
+    assert format_status(st, ms(12, 0, 20), TZ) == (
+        "🔑 Contacto puesto, motor apagado · último dato hace 20 s"
+    )
+    st = CarStatus("engine_off", ms(12, 0), None, None, False)
+    assert format_status(st, ms(12, 0, 20), TZ) == (
+        "🔑 Contacto puesto, motor apagado · último dato hace 20 s\nSin posición GPS todavía."
+    )
+
+
+def test_format_stopped():
+    st = CarStatus("stopped", ms(12, 0), P(ms(12, 0)), 0.0, None)
+    assert format_status(st, ms(12, 0, 20), TZ) == "⏸️ Parado · último dato hace 20 s"
+    st = CarStatus("stopped", ms(12, 0), None, None, None)
+    assert format_status(st, ms(12, 0, 20), TZ) == (
+        "⏸️ Parado · último dato hace 20 s\nSin posición GPS todavía."
+    )
+
+
+def test_format_no_signal():
+    st = CarStatus("no_signal", ms(18, 42), P(ms(18, 42)), 60.0, True)
+    assert format_status(st, ms(18, 50), TZ) == "📵 Sin señal desde las 18:42 · iba en marcha"
+    st = CarStatus("no_signal", ms(18, 42), None, 60.0, True)
+    assert format_status(st, ms(18, 50), TZ) == (
+        "📵 Sin señal desde las 18:42 · iba en marcha\nSin posición GPS todavía."
     )
 
 

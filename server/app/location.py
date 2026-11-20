@@ -13,6 +13,8 @@ MOVING_WINDOW_MS = 300_000
 MOVING_MIN_KMH = 5.0
 GPS_GAP_MS = 120_000
 OBD_WINDOW_MS = 60_000
+VOLTAGE_WINDOW_MS = 180_000
+ENGINE_ON_VOLTAGE = 13.2
 GPS_CANDIDATES = 50
 
 
@@ -27,10 +29,13 @@ class GpsPoint:
 
 @dataclass(frozen=True)
 class CarStatus:
-    state: Literal["moving", "idle", "parked", "no_data"]
+    state: Literal[
+        "moving", "idle", "engine_off", "stopped", "no_signal", "parked", "no_data"
+    ]
     last_ts: int | None
     point: GpsPoint | None
     speed_kmh: float | None
+    engine_on: bool | None = None
 
 
 def _haversine_m(a: GpsPoint, b: GpsPoint) -> float:
@@ -83,6 +88,25 @@ def _speed_kmh(conn: sqlite3.Connection, last_ts: int, point: GpsPoint | None) -
     return None
 
 
+def _engine_on(conn: sqlite3.Connection, last_ts: int) -> bool | None:
+    """Engine state from OBD: rpm (last 60 s) first, else voltage (last 180 s)."""
+    rows = [
+        (ts, json.loads(d).get("values") or {})
+        for (ts, d) in conn.execute(
+            "SELECT ts, data FROM records WHERE type='obd' AND ts BETWEEN ? AND ?"
+            " ORDER BY ts DESC",
+            (last_ts - VOLTAGE_WINDOW_MS, last_ts),
+        )
+    ]
+    for ts, v in rows:
+        if ts >= last_ts - OBD_WINDOW_MS and v.get("rpm") is not None:
+            return float(v["rpm"]) > 0
+    for _, v in rows:
+        if v.get("voltage_v") is not None:
+            return float(v["voltage_v"]) >= ENGINE_ON_VOLTAGE
+    return None
+
+
 def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
     last_ts = conn.execute("SELECT MAX(ts) FROM records").fetchone()[0]
     if last_ts is None:
@@ -98,13 +122,19 @@ def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
         points.append(GpsPoint(ts, d["lat"], d["lon"], d["acc_m"], d.get("speed_mps")))
     point = last_valid_point(points)
     speed = _speed_kmh(conn, last_ts, point)
+    engine_on = _engine_on(conn, last_ts)
+    fast = speed is not None and speed >= MOVING_MIN_KMH
     if now_ms - last_ts >= MOVING_WINDOW_MS:
-        state = "parked"
-    elif speed is not None and speed >= MOVING_MIN_KMH:
+        state = "no_signal" if fast else "parked"
+    elif fast:
         state = "moving"
-    else:
+    elif engine_on is True:
         state = "idle"
-    return CarStatus(state, last_ts, point, speed)
+    elif engine_on is False:
+        state = "engine_off"
+    else:
+        state = "stopped"
+    return CarStatus(state, last_ts, point, speed, engine_on)
 
 
 def _rel(delta_ms: int) -> str:
@@ -130,6 +160,12 @@ def format_status(status: CarStatus, now_ms: int, tz: str) -> str:
             text += f" · {round(status.speed_kmh)} km/h"
     elif status.state == "idle":
         text = f"⏸️ Parado pero encendido · último dato hace {rel}"
+    elif status.state == "engine_off":
+        text = f"🔑 Contacto puesto, motor apagado · último dato hace {rel}"
+    elif status.state == "stopped":
+        text = f"⏸️ Parado · último dato hace {rel}"
+    elif status.state == "no_signal":
+        text = f"📵 Sin señal desde las {_hhmm(status.last_ts, tz)} · iba en marcha"
     else:
         text = f"🅿️ Aparcado desde las {_hhmm(status.last_ts, tz)} (hace {rel})"
         if status.point is not None and status.last_ts - status.point.ts > GPS_GAP_MS:
