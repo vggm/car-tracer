@@ -45,6 +45,14 @@ private data class Bonded(val name: String, val address: String, val paired: Boo
     val label get() = if (paired) "$name ($address)" else "$address (no emparejado)"
 }
 
+private val PROTOCOLS = listOf(
+    "Automático (recomendado)" to "0",
+    "ISO 14230 KWP rápido" to "5",
+    "ISO 14230 KWP lento" to "4",
+    "ISO 9141-2" to "3",
+    "CAN 500 kbps" to "6",
+)
+
 @SuppressLint("MissingPermission")
 private fun bondedDevices(ctx: Context): List<Bonded>? {
     if (ctx.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return null
@@ -64,6 +72,7 @@ fun SettingsScreen() {
     var token by rememberSaveable { mutableStateOf(settings.token) }
     var showToken by rememberSaveable { mutableStateOf(false) }
     var adapter by rememberSaveable { mutableStateOf(settings.adapterAddress) }
+    var protocol by rememberSaveable { mutableStateOf(settings.obdProtocol) }
     var simulated by rememberSaveable { mutableStateOf(settings.simulated) }
     var urlError by rememberSaveable { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
@@ -122,6 +131,16 @@ fun SettingsScreen() {
                 }
             }
         }
+        Text("Protocolo OBD", style = MaterialTheme.typography.titleMedium)
+        PROTOCOLS.forEach { (label, value) ->
+            Row(
+                Modifier.fillMaxWidth().selectable(selected = protocol == value, onClick = { protocol = value; saved = false }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = protocol == value, onClick = { protocol = value; saved = false })
+                Text(label)
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Modo simulado")
             Switch(checked = simulated, onCheckedChange = { simulated = it; saved = false })
@@ -133,6 +152,7 @@ fun SettingsScreen() {
                 settings.serverUrl = url.trim()
                 settings.token = token.trim()
                 settings.adapterAddress = adapter
+                settings.obdProtocol = protocol
                 settings.simulated = simulated
                 saved = true
             }
