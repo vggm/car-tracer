@@ -15,6 +15,7 @@ class UploadLoop(
     private val remaining: suspend () -> Int,
     private val onOutcome: (UploadOutcome) -> Unit,
     private val wait: suspend (Long) -> Unit = { delay(it) },
+    private val idleMs: () -> Long = { IDLE_MS },
 ) {
     private val resets = Channel<Unit>(Channel.CONFLATED)
 
@@ -39,9 +40,9 @@ class UploadLoop(
                 is UploadOutcome.Sent -> {
                     failures = 0
                     if (remaining() > 0) continue
-                    pause(IDLE_MS)
+                    pause(idleMs())
                 }
-                is UploadOutcome.Discarded, UploadOutcome.Idle -> pause(IDLE_MS)
+                is UploadOutcome.Discarded, UploadOutcome.Idle -> pause(idleMs())
                 is UploadOutcome.Retry, UploadOutcome.Unauthorized, UploadOutcome.TooLarge -> {
                     val r = pause(UploadPolicy.nextDelayMs(failures))
                     failures++
@@ -65,5 +66,8 @@ class UploadLoop(
         res
     }
 
-    companion object { const val IDLE_MS = 30_000L }
+    companion object {
+        const val IDLE_MS = 30_000L
+        const val MOVING_IDLE_MS = 10_000L
+    }
 }
