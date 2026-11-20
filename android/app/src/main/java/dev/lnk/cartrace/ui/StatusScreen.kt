@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,6 +30,7 @@ fun StatusScreen() {
     val dropped by Status.dropped.collectAsStateWithLifecycle()
     val bootCount by Status.bootCount.collectAsStateWithLifecycle()
     val errors by Status.errors.collectAsStateWithLifecycle()
+    val obdLog by Status.obdLog.collectAsStateWithLifecycle()
 
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -56,6 +58,12 @@ fun StatusScreen() {
         Line("Arranque nº", Formatters.bootCount(bootCount), warning = Formatters.isBootCountSuspicious(bootCount))
         Text("Últimos errores", style = MaterialTheme.typography.titleMedium)
         if (errors.isEmpty()) Text("Ninguno") else errors.asReversed().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Diagnóstico OBD", style = MaterialTheme.typography.titleMedium)
+        if (obdLog.isEmpty()) {
+            Text("Sin actividad todavía")
+        } else {
+            obdLog.forEach { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+        }
     }
 }
 

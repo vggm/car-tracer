@@ -21,6 +21,7 @@ object Status {
     private val _dropped = MutableStateFlow(0)
     private val _bootCount = MutableStateFlow<Int?>(null)
     private val _errors = MutableStateFlow<List<String>>(emptyList())
+    private val _obdLog = MutableStateFlow<List<String>>(emptyList())
 
     val serviceRunning: StateFlow<Boolean> = _serviceRunning.asStateFlow()
     val obd: StateFlow<ObdState> = _obd.asStateFlow()
@@ -30,6 +31,8 @@ object Status {
     val dropped: StateFlow<Int> = _dropped.asStateFlow()
     val bootCount: StateFlow<Int?> = _bootCount.asStateFlow()
     val errors: StateFlow<List<String>> = _errors.asStateFlow()
+    /** Raw ELM327 conversation, oldest first. */
+    val obdLog: StateFlow<List<String>> = _obdLog.asStateFlow()
 
     fun setServiceRunning(v: Boolean) { _serviceRunning.value = v }
     fun setObd(v: ObdState) { _obd.value = v }
@@ -44,6 +47,7 @@ object Status {
 
     fun setBootCount(v: Int) { _bootCount.value = v }
     fun setDropped(v: Int) { _dropped.value = v }
+    fun setObdLog(lines: List<String>) { _obdLog.value = lines }
 
     fun addError(message: String) {
         _errors.update { (it + message).takeLast(MAX_ERRORS) }
@@ -58,5 +62,6 @@ object Status {
         _dropped.value = 0
         _bootCount.value = null
         _errors.value = emptyList()
+        _obdLog.value = emptyList()
     }
 }
