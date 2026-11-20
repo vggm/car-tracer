@@ -99,7 +99,7 @@ class TelemetryService : Service() {
         uploadLoop = loop
         supervisor.launch("sources") {
             graph.settings.changes
-                .map { it.simulated to it.adapterAddress }
+                .map { Triple(it.simulated, it.adapterAddress, it.obdProtocol) }
                 .distinctUntilChanged()
                 .collect { restartSources(graph.settings.snapshot()) }
         }
@@ -212,6 +212,7 @@ class TelemetryService : Service() {
                 sessionProvider = { session.get() },
                 protocolStore = graph.protocolStore,
                 adapterAddress = snap.adapterAddress,
+                protocolPreference = snap.obdProtocol,
             )
             coroutineScope {
                 launch { obd.state.collect { Status.setObd(it) } }
