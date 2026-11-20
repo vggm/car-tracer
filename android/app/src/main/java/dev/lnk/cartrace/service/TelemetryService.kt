@@ -162,6 +162,8 @@ class TelemetryService : Service() {
         super.onDestroy()
     }
 
+    private val motion by lazy { MotionTracker { graph.clocks.elapsedMs() } }
+
     private fun buildUploadLoop(): UploadLoop {
         val uploader = Uploader(
             queue = graph.queue,
@@ -176,6 +178,7 @@ class TelemetryService : Service() {
         return UploadLoop(
             uploadOnce = { uploader.uploadOnce() },
             remaining = { graph.queue.size() },
+            idleMs = { if (motion.isMoving()) UploadLoop.MOVING_IDLE_MS else UploadLoop.IDLE_MS },
             onOutcome = { o: UploadOutcome ->
                 Status.recordUpload(System.currentTimeMillis(), o)
                 if (o is UploadOutcome.Unauthorized) Log.w(TAG, "upload rejected: 401")
@@ -253,6 +256,7 @@ class TelemetryService : Service() {
         val stamp = graph.clocks.stamp()
         graph.offsetRecorder.onFix(stamp.bootCount, fix.utcMs, stamp.elapsedMs, fix.simulated)
         Status.setLastFix(fix)
+        motion.onFix(fix.speedMps)
         val sess = session.get()
         graph.queue.add(
             GpsRecord(
