@@ -30,6 +30,7 @@ Problemas conocidos o previsibles, por qué importan y cómo podrían abordarse.
 | Limitación | Por qué importa | Posibles soluciones |
 | --- | --- | --- |
 | Cobertura irregular: túneles, parkings subterráneos | Se perderían datos | Cola local en la tablet que se vacía al volver la conexión, aunque sea en el siguiente arranque |
+| Sin cobertura no se sabe en tiempo real dónde está el coche | `/donde` diría "aparcado" mientras se conduce | Si el último dato iba a 5 km/h o más, decir "Sin señal desde las HH:MM · iba en marcha" en vez de "Aparcado". Enviar cada 10 s en marcha (30 s parado) para que el último dato recibido esté lo más cerca posible de la realidad |
 | Sin GPS en parkings subterráneos | La posición de aparcamiento sería imprecisa | Conservar y enviar el último punto válido antes de perder la señal |
 | El homelab puede estar caído o sin internet | La tablet no podría enviar | La misma cola local; se envía después por partes, primero lo más antiguo |
 | La recepción de datos es pública (Funnel) | Cualquiera con la URL puede intentar enviar datos | Token obligatorio, exponer solo ese servicio, limitar el tamaño de los envíos y validar cada dato |
@@ -44,5 +45,7 @@ Problemas conocidos o previsibles, por qué importan y cómo podrían abordarse.
 | Limitación | Por qué importa | Posibles soluciones |
 | --- | --- | --- |
 | Puntos erróneos: posición 0,0, baja precisión, saltos imposibles | Moverían el aparcamiento o inflarían las distancias | Ignorar puntos sin precisión suficiente, en 0,0 o con saltos de velocidad imposibles |
-| Maniobras de aparcamiento | Crearían trayectos de pocos metros | Descartar trayectos muy cortos |
-| Paradas en semáforos o atascos | Partirían un trayecto en varios | Cerrar un trayecto solo tras varios minutos parado |
+| Maniobras de aparcamiento | Crearían trayectos de pocos metros | Un trayecto solo cuenta si el motor estuvo en marcha y el coche recorrió más de unos 300 m |
+| Paradas en semáforos o atascos | Partirían un trayecto en varios | No ocurre: un trayecto va de poner a quitar el contacto. Se detecta por un hueco en la hora de **medición** de los datos (la tablet solo mide con el contacto puesto), no en la de recepción, así que ni los semáforos ni la falta de cobertura lo cortan |
+| Paradas cortas con el motor apagado (repostar) | Un viaje largo queda partido en varios trayectos | Cada vez que se apaga el motor se cierra el trayecto. Para verlo junto, los trayectos se agrupan en un **viaje** sin modificarlos: a mano, o por sugerencia cuando las pausas son cortas (menos de 1 h) y la distancia total larga (más de 100 km). Llegará con el panel web |
+| Contacto puesto con el motor apagado | No es un trayecto aunque haya datos | El motor está en marcha si las RPM del OBD son mayores que 0; sin RPM, si el voltaje es de 13,2 V o más (el alternador carga) |
