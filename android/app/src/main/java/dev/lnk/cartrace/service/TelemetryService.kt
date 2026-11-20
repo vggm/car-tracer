@@ -21,6 +21,8 @@ import dev.lnk.cartrace.gps.AndroidGpsSource
 import dev.lnk.cartrace.gps.GpsFix
 import dev.lnk.cartrace.gps.GpsSource
 import dev.lnk.cartrace.obd.BluetoothElmTransport
+import dev.lnk.cartrace.obd.ElmLog
+import dev.lnk.cartrace.obd.LoggingElmTransport
 import dev.lnk.cartrace.obd.ObdSource
 import dev.lnk.cartrace.obd.ObdState
 import dev.lnk.cartrace.settings.SettingsSnapshot
@@ -203,9 +205,12 @@ class TelemetryService : Service() {
         }
         val ctx = this
         obdJob = supervisor.launch("obd") {
+            // One log per OBD run, so the screen keeps the history across reconnect attempts.
+            val elmLog = ElmLog(sink = Status::setObdLog)
             val obd = ObdSource(
                 transportFactory = {
-                    if (snap.simulated) FakeElmTransport() else BluetoothElmTransport(ctx, snap.adapterAddress)
+                    val inner = if (snap.simulated) FakeElmTransport() else BluetoothElmTransport(ctx, snap.adapterAddress)
+                    LoggingElmTransport(inner, elmLog)
                 },
                 clocks = graph.clocks,
                 emit = { record, stamp -> graph.queue.add(record, stamp) },
