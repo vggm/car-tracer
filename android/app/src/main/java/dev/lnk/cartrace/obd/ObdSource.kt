@@ -37,6 +37,7 @@ class ObdSource(
     private val cycleDelayMs: Long = 100,
     private val protocolStore: ProtocolStore = NoProtocolStore,
     private val adapterAddress: String = "",
+    private val protocolPreference: String = "0",
 ) {
     private val _state = MutableStateFlow<ObdState>(ObdState.Connecting)
     val state: StateFlow<ObdState> = _state
@@ -86,22 +87,34 @@ class ObdSource(
         }
     }
 
-    /** Tries the stored protocol (fast, no search); if it fails, retries once with the automatic search. */
+    /**
+     * Manual preference: only that protocol. Automatic: stored protocol, then the ELM search (0),
+     * then the K-line protocols the search often misses on clones. Rethrows the last failure.
+     */
     private suspend fun initializeWithStoredProtocol(t: ElmTransport): String {
-        val stored = protocolStore.get(adapterAddress)?.takeIf { PROTOCOL_NUMBER.matches(it) }
-        if (stored != null) {
+        val candidates = if (protocolPreference != "0") {
+            listOf(protocolPreference)
+        } else {
+            val stored = protocolStore.get(adapterAddress)?.takeIf { PROTOCOL_NUMBER.matches(it) }
+            listOfNotNull(stored, "0", "5", "4", "3").distinct()
+        }
+        var last: InitFailure? = null
+        for (candidate in candidates) {
             try {
-                return initialize(t, stored)
+                return initialize(t, candidate)
             } catch (e: InitFailure) {
-                // fall through to the automatic search
+                last = e
             }
         }
-        return initialize(t, "0")
+        throw last!!
     }
 
     private suspend fun initialize(t: ElmTransport, protocolNumber: String): String {
         t.command("ATZ", LONG_TIMEOUT)
-        for (c in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP$protocolNumber")) t.command(c)
+        val setup = mutableListOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP$protocolNumber")
+        // Some PSA ECUs send non-standard key bytes on K-line; replies (clones answer "?") are ignored.
+        if (protocolNumber in K_LINE) setup += "ATKW0"
+        for (c in setup) t.command(c)
         supported = emptySet()
         var next: String? = "0100"
         val found = linkedSetOf<String>()
@@ -200,6 +213,7 @@ class ObdSource(
         const val LONG_TIMEOUT = 10_000L
         const val FIRST_PID_TIMEOUT = 30_000L
         const val MAX_DETAIL = 200
+        val K_LINE = setOf("3", "4", "5")
         val PROTOCOL_NUMBER = Regex("[1-9A-C]")
     }
 }
