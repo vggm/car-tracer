@@ -11,6 +11,7 @@ data class SettingsSnapshot(
     val adapterAddress: String,
     val simulated: Boolean,
     val deviceId: String,
+    val obdProtocol: String,
 )
 
 /** App settings over SharedPreferences; getters always read the current stored value. */
@@ -34,7 +35,11 @@ class AppSettings(private val prefs: SharedPreferences) {
         get() = prefs.getString(K_DEVICE, DEFAULT_DEVICE_ID) ?: DEFAULT_DEVICE_ID
         set(v) = put { putString(K_DEVICE, v) }
 
-    fun snapshot() = SettingsSnapshot(serverUrl, token, adapterAddress, simulated, deviceId)
+    var obdProtocol: String
+        get() = prefs.getString(K_PROTOCOL, DEFAULT_PROTOCOL) ?: DEFAULT_PROTOCOL
+        set(v) = put { putString(K_PROTOCOL, v) }
+
+    fun snapshot() = SettingsSnapshot(serverUrl, token, adapterAddress, simulated, deviceId, obdProtocol)
 
     private inline fun put(block: SharedPreferences.Editor.() -> Unit) {
         prefs.edit().apply(block).commit()
@@ -42,11 +47,13 @@ class AppSettings(private val prefs: SharedPreferences) {
     }
 
     companion object {
+        const val DEFAULT_PROTOCOL = "0"
         const val DEFAULT_DEVICE_ID = "junsun-307"
         private const val K_URL = "server_url"
         private const val K_TOKEN = "token"
         private const val K_ADAPTER = "adapter_address"
         private const val K_SIM = "simulated"
+        private const val K_PROTOCOL = "obd_protocol"
         private const val K_DEVICE = "device_id"
     }
 }
