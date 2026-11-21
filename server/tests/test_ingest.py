@@ -172,6 +172,14 @@ def test_ingest_returns_fresh_scan_command(client):
     assert r.json()["commands"] == [{"type": "read_dtc", "id": sid}]
 
 
+def test_ingest_returns_clear_command(client):
+    from app import scans
+    from conftest import FIXED_NOW
+    sid = scans.create_scan(client.app.state.db, FIXED_NOW - 1000, "clear_dtc")
+    r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
+    assert r.json()["commands"] == [{"type": "clear_dtc", "id": sid}]
+
+
 def test_ingest_omits_stale_and_closed_scans(client):
     from app import scans
     from conftest import FIXED_NOW
