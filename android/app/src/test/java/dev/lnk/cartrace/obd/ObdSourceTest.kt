@@ -458,6 +458,49 @@ class ObdSourceTest {
     }
 
     @Test
+    fun busInitUnableToConnectIsClassified() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "BUS INIT: UNABLE TO CONNECT\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val state = src.state.value as ObdState.Retrying
+        assertEquals("UNABLE TO CONNECT", state.error)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWhileConnectedEmitsDtcThenEventAndDedupes() = runTest {
+        val src = source { ScriptedTransport(mutableListOf()) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        records.clear()
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        val relevant = records.filter { it is DtcRecord || (it is EventRecord && it.event == Events.DTC_SCAN) }
+        assertEquals(2, relevant.size)
+        val dtc = relevant[0] as DtcRecord
+        assertEquals(listOf("P0133"), dtc.active)
+        val ev = relevant[1] as EventRecord
+        assertEquals("x", ev.detail)
+        records.clear()
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        assertTrue(records.none { it is DtcRecord })
+        assertTrue(events().isEmpty())
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWhenNotConnectedEmitsFailureImmediately() = runTest {
+        val src = source { ScriptedTransport(mutableListOf()) }
+        src.requestDtcScan("x")
+        val ev = events().single()
+        assertEquals(Events.DTC_SCAN_FAILED, ev.event)
+        assertEquals("x obd_not_connected", ev.detail)
+        src.requestDtcScan("x")
+        assertEquals(1, events().size)
+    }
+
+    @Test
     fun eventDetailTruncatedTo200() = runTest {
         val src = source { ScriptedTransport(mutableListOf(), failAfter = 20, lostMessage = "x".repeat(500)) }
         val job = launch { src.run() }

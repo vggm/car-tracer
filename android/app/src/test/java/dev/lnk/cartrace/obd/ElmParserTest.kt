@@ -89,6 +89,10 @@ class ElmParserTest {
     @Test fun busInitErrorIsError() {
         assertTrue(ElmParser.isError("BUS INIT: ...ERROR\r\r>"))
         assertTrue(ElmParser.isError("BUS INIT: ERROR"))
+        assertTrue(ElmParser.isError("BUS INIT: UNABLE TO CONNECT\r\r>"))
+        assertTrue(ElmParser.isUnableToConnect("BUS INIT: UNABLE TO CONNECT\r\r>"))
+        assertTrue(ElmParser.isUnableToConnect("UNABLE TO CONNECT\r\r>"))
+        assertFalse(ElmParser.isUnableToConnect("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
         assertFalse(ElmParser.isError("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
     }
 }
