@@ -82,6 +82,22 @@ def test_stored_row(client):
     )
 
 
+def test_obd_attempt_failed_event_is_stored(client):
+    req = load("valid-mixed")["request"]
+    detail = "n=2 t=54s v=12.4V | 5: BUS INIT ERROR | 0: UNABLE TO CONNECT"
+    rec = dict(req["records"][0])
+    rec.update(id="aaaaaaaa-113b-4b4e-aba8-bdcff7f6eda2", seq=999,
+               event="obd_attempt_failed", detail=detail)
+    assert rec["type"] == "event"
+    r = client.post("/api/v1/ingest", json={**req, "records": [rec]}, headers=HDR)
+    assert r.status_code == 200
+    assert r.json()["accepted"] == 1
+    row = client.app.state.db.execute(
+        "SELECT data FROM records WHERE id=?", (rec["id"],)
+    ).fetchone()
+    assert json.loads(row[0]) == {"event": "obd_attempt_failed", "detail": detail}
+
+
 @pytest.mark.parametrize(
     "headers",
     [{}, {"Authorization": "Bearer x"}, {"Authorization": "Basic test-token"},

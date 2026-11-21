@@ -71,3 +71,9 @@ def test_batch_rejects_bad_device_id():
 ])
 def test_scan_events_accepted(event, detail):
     parse_record(base(type="event", event=event, detail=detail), NOW)
+
+
+def test_obd_attempt_failed_event_accepted():
+    detail = "n=2 t=54s v=12.4V | 5: BUS INIT ERROR | 0: UNABLE TO CONNECT"
+    parsed = parse_record(base(type="event", event="obd_attempt_failed", detail=detail), NOW)
+    assert parsed.payload() == {"event": "obd_attempt_failed", "detail": detail}
