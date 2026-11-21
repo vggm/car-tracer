@@ -150,3 +150,27 @@ def test_send_failure_does_not_stop_pass_or_reopen(conn):
     check_scans(conn, c, CHAT, NOW + 5_000, TZ)
     assert len(c.sent) == 1
     assert scans.open_scans(conn) == []
+
+
+def test_run_watcher_retries_connect(tmp_path, monkeypatch):
+    from app.bot import scan_watcher
+    attempts = []
+    seen = []
+
+    def flaky_connect(path):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise OSError("db locked")
+        return "CONN"
+
+    def fake_check(conn, *a, **k):
+        seen.append(conn)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scan_watcher, "check_scans", fake_check)
+    sleeps = []
+    with pytest.raises(KeyboardInterrupt):
+        run_watcher("p", FakeClient(), CHAT, TZ, sleep=sleeps.append, connect=flaky_connect)
+    assert len(attempts) == 2
+    assert seen == ["CONN"]
+    assert sleeps == [scan_watcher.SCAN_POLL_S]

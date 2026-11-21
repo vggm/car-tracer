@@ -74,10 +74,12 @@ def check_scans(conn, client, chat_id: int, now_ms: int, tz: str) -> None:
             log.warning("scan reply failed (%s)", type(e).__name__)
 
 
-def run_watcher(db_path, client, chat_id, tz, sleep=time.sleep) -> None:
-    conn = connect(db_path)
+def run_watcher(db_path, client, chat_id, tz, sleep=time.sleep, connect=connect) -> None:
+    conn = None
     while True:
         try:
+            if conn is None:
+                conn = connect(db_path)
             check_scans(conn, client, chat_id, int(time.time() * 1000), tz)
         except Exception as e:
             # type name only: the bot URL carries its credential
