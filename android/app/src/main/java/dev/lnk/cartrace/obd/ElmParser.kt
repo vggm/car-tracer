@@ -90,8 +90,14 @@ object ElmParser {
             .map { it.filter { c -> !c.isWhitespace() }.uppercase() }
             .any { it.startsWith("BUSINIT") && it.contains("ERROR") }
 
+    /** "BUS INIT: UNABLE TO CONNECT" also starts with the BUS INIT noise prefix, so [clean] drops it. */
+    fun isUnableToConnect(raw: String): Boolean =
+        raw.split('\r', '\n')
+            .map { it.filter { c -> !c.isWhitespace() }.uppercase() }
+            .any { it.contains("UNABLETOCONNECT") }
+
     fun isError(raw: String): Boolean =
-        isBusInitError(raw) || clean(raw).any { line -> line == "?" || ERRORS.any { line.contains(it) } }
+        isBusInitError(raw) || isUnableToConnect(raw) || clean(raw).any { line -> line == "?" || ERRORS.any { line.contains(it) } }
 
     private fun hexBytes(hex: String): List<Int>? {
         if (hex.length % 2 != 0) return null

@@ -154,7 +154,7 @@ class ObdSource(
             // The first request may run the whole protocol search (K-line inits take > 10 s).
             val raw = t.command(next, if (first) FIRST_PID_TIMEOUT else LONG_TIMEOUT)
             if (ElmParser.isError(raw)) {
-                val unable = ElmParser.clean(raw).any { it.contains("UNABLETOCONNECT") }
+                val unable = ElmParser.isUnableToConnect(raw)
                 val busInit = ElmParser.isBusInitError(raw)
                 if (first || unable) {
                     throw InitFailure(
