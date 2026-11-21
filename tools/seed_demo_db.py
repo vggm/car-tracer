@@ -33,6 +33,7 @@ PARKED_LOW_DAYS = 5     # engine off, 11.8 V
 WEAK_CHARGE_DAYS = 30   # two 12.6 V readings with the engine running
 DTC1_DAYS, DTC1_CODE = 60, "P0401"
 DTC2_DAYS, DTC2_CODE = 20, "P0409"
+NO_OBD_DAYS = 8         # forced session without OBD (inside the 90-day alert window)
 CLEAR_DAYS = 10         # dtc_clear event at 06:00 of that day; later readings are empty
 
 
@@ -71,7 +72,7 @@ class Session:
 
     def add(self, offset_ms, rtype, data):
         ts = self.start_ms + offset_ms
-        self.s.rows.append((self.s.uid(), "demo", self.id, self.seq, ts, rtype,
+        self.s.rows.append((self.s.uid(), DEVICE, self.id, self.seq, ts, rtype,
                             json.dumps(data), ts + 1000))
         self.seq += 1
 
@@ -110,7 +111,7 @@ def drive(sd, sess, minutes, with_obd, overheat=False, weak_charge=False):
         sess.add(off, "gps", {
             "lat": round(CENTER_LAT + y / M_PER_DEG_LAT, 6),
             "lon": round(CENTER_LON + x / M_PER_DEG_LON, 6),
-            "acc_m": 5.0, "speed_mps": round(mps, 2), "bearing": round(heading, 1), "alt_m": 650.0,
+            "acc_m": 5.0, "speed_mps": round(mps, 2), "bearing": round(heading, 1) % 360.0, "alt_m": 650.0,
         })
         if not with_obd:
             continue
@@ -145,7 +146,7 @@ def build(db_path, days, seed):
     sd = Seeder(seed, int(time.time() * 1000))
     rng = sd.rng
     slots = list(range(7, 22, 2))
-    special = {OVERHEAT_DAYS, WEAK_CHARGE_DAYS, CLEAR_DAYS}
+    special = {OVERHEAT_DAYS, WEAK_CHARGE_DAYS, CLEAR_DAYS, NO_OBD_DAYS}
 
     for d in range(days, QUIET_DAYS, -1):
         day0 = sd.today0 - d * DAY_MS
@@ -165,6 +166,8 @@ def build(db_path, days, seed):
                 minutes, with_obd, kw = 45, True, {"overheat": True}
             elif d == WEAK_CHARGE_DAYS:
                 minutes, with_obd, kw = 15, True, {"weak_charge": True}
+            elif d == NO_OBD_DAYS:
+                with_obd = False
             elif d == CLEAR_DAYS:
                 with_obd = True
             drive(sd, sd.session(start), minutes, with_obd, **kw)
@@ -188,8 +191,8 @@ def main(argv=None):
     p.add_argument("--days", type=int, default=420)
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args(argv)
-    if a.days <= PARKED_LOW_DAYS:
-        p.error("--days must be greater than %d" % PARKED_LOW_DAYS)
+    if a.days < DTC1_DAYS + 1:
+        p.error("--days must be at least %d" % (DTC1_DAYS + 1))
     if os.path.exists(a.db_path):
         p.error("db_path already exists: refusing to overwrite")
     n, s = build(a.db_path, a.days, a.seed)
