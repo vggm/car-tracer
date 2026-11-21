@@ -117,8 +117,9 @@ def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str,
             "SELECT data FROM records WHERE type='dtc' AND ts < ? ORDER BY ts DESC LIMIT 1",
             (start_ts,),
         ).fetchone()
-        known = set(_codes(json.loads(prev[0]))) if prev else set()
-        new_dtcs = [c for c in _codes(dtc_rows[-1]) if c not in known]
+        if prev:
+            known = set(_codes(json.loads(prev[0])))
+            new_dtcs = [c for c in _codes(dtc_rows[-1]) if c not in known]
 
     return Trip(
         id=f"{session_id}:{start_ts}",

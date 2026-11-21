@@ -154,6 +154,14 @@ def test_new_dtcs_none_and_empty(tmp_path):
     assert trip.new_dtcs == []
 
 
+def test_new_dtcs_none_without_previous_reading(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 1_000_000, 100)
+    dtc(conn, 1_050_000, active=["P0401"])
+    (trip,), _ = list_trips(conn)
+    assert trip.new_dtcs is None
+
+
 def test_pagination(tmp_path):
     conn = _conn(tmp_path)
     for k in range(7):
