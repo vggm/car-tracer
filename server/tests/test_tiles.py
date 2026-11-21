@@ -40,7 +40,7 @@ def test_miss_downloads_and_writes(tmp_path):
     assert make(tmp_path, h).fetch(5, 3, 4) == b"png"
     assert (tmp_path / "5" / "3" / "4.png").read_bytes() == b"png"
     assert str(seen[0].url) == "https://tile.openstreetmap.org/5/3/4.png"
-    assert seen[0].headers["User-Agent"] == "car-trace-bot/1.0 (self-hosted, personal use)"
+    assert seen[0].headers["User-Agent"] == "car-trace/1.0 (self-hosted, personal use)"
     assert not list(tmp_path.rglob("*.tmp"))
 
 
