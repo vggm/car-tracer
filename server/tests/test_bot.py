@@ -409,7 +409,7 @@ def test_callback_still_handled_when_answer_fails(conn, caplog):
     c2 = FailingAnswer()
     run(cb(data), conn, c2)
     assert c2.calls[0][0] == "message" and "🕒" in c2.calls[0][2]
-    assert c2.calls[1][0] == "document"
+    assert c2.calls[1][0] == "markup"
     assert "HTTP 400" not in caplog.text
 
 

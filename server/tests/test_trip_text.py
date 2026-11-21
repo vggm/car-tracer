@@ -159,8 +159,8 @@ def query(url):
 
 def test_maps_url_two_points_no_waypoints():
     url = maps_url([gp(40.4168, -3.7038), gp(40.4268, -3.6938)])
-    assert url == ("https://www.google.com/maps/dir/?api=1&origin=40.4168%2C-3.7038"
-                   "&destination=40.4268%2C-3.6938&travelmode=driving")
+    assert url == ("https://www.google.com/maps/dir/?api=1&origin=40.41680%2C-3.70380"
+                   "&destination=40.42680%2C-3.69380&travelmode=driving")
     assert "waypoints" not in url
 
 
@@ -168,8 +168,8 @@ def test_maps_url_long_route_has_eight_ordered_waypoints():
     pts = straight(50)
     url = maps_url(pts)
     q = query(url)
-    assert q["origin"] == ["40.4168,-3.7038"]
-    assert q["destination"] == [f"{40.4168 + 49 * 0.001:.5f},-3.7038"]
+    assert q["origin"] == ["40.41680,-3.70380"]
+    assert q["destination"] == [f"{40.4168 + 49 * 0.001:.5f},-3.70380"]
     wps = q["waypoints"][0].split("|")
     assert len(wps) == 8
     lats = [float(w.split(",")[0]) for w in wps]
