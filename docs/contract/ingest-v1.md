@@ -50,7 +50,7 @@ Campos por tipo:
 
 | Respuesta | Significado | La app |
 | --- | --- | --- |
-| `200` `{"accepted": n, "duplicates": n, "rejected": [{"index": i, "id": "…", "error": "…"}], "commands": [{"type": "read_dtc" | "clear_dtc", "id": "<uuid>"}]}` | Lote procesado; cada registro se valida por separado. `commands` siempre está presente (puede ser `[]`) y lista las peticiones abiertas (`read_dtc`: leer averías; `clear_dtc`: borrar las averías de la centralita, solo con el motor apagado) de menos de 90 s, que se reenvían en cada respuesta hasta que llega el resultado o caducan | Borra el lote entero de la cola y atiende los `commands` nuevos (ignora ids ya atendidos) |
+| `200` `{"accepted": n, "duplicates": n, "rejected": [{"index": i, "id": "…", "error": "…"}], "commands": [{"type": "read_dtc" o "clear_dtc", "id": "<uuid>"}]}` | Lote procesado; cada registro se valida por separado. `commands` siempre está presente (puede ser `[]`) y lista las peticiones abiertas (`read_dtc`: leer averías; `clear_dtc`: borrar las averías de la centralita, solo con el motor apagado) de menos de 90 s, que se reenvían en cada respuesta hasta que llega el resultado o caducan | Borra el lote entero de la cola y atiende los `commands` nuevos (ignora ids ya atendidos) |
 | `400` | El lote en sí es inválido (JSON roto, faltan `device_id` o `records`, más de 500 registros) | Lo descarta y lo anota en el registro de errores: nunca tendrá éxito |
 | `401` | Token ausente o incorrecto | Conserva el lote y muestra el error en la pantalla de estado y en la notificación |
 | `413` | Más de 256 KB | Parte el lote por la mitad y reintenta |

@@ -15,6 +15,20 @@ SCAN_POLL_S = 2
 
 FAILED_TEXT = "⚠️ La tablet no está conectada al ELM327 ahora mismo."
 TIMEOUT_TEXT = "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato."
+ENGINE_RUNNING_TEXT = (
+    "🔑 Para borrar, pon el contacto con el motor apagado y vuelve a mandar /borrar_averias."
+)
+REJECTED_TEXT = "⚠️ La centralita no ha aceptado el borrado. Prueba con el motor apagado."
+LINK_LOST_TEXT = (
+    "⚠️ Se perdió la conexión con el ELM327 durante el borrado. "
+    "Comprueba con /escanear si se borraron."
+)
+CLEAR_FAILED_TEXTS = {
+    "engine_running": ENGINE_RUNNING_TEXT,
+    "obd_not_connected": FAILED_TEXT,
+    "rejected": REJECTED_TEXT,
+    "obd_error": LINK_LOST_TEXT,
+}
 
 
 def _codes(data: str) -> list[str]:
@@ -45,10 +59,30 @@ def _done_text(conn, event_ts: int, tz: str) -> str:
     return "\n".join([f"⚠️ Averías · leídas ahora {when}", *format_codes(codes, new)])
 
 
-def _process(conn, scan_id, requested_at, now_ms, tz):
+def _clear_done_text(conn, event_ts: int, requested_at: int) -> str:
+    # only a reading taken after the clear request says what the ECU holds now
+    row = conn.execute(
+        "SELECT data FROM records WHERE type='dtc' AND ts <= ? AND ts >= ?"
+        " ORDER BY ts DESC LIMIT 1",
+        (event_ts, requested_at),
+    ).fetchone()
+    if row is None:
+        return "✅ Averías borradas."
+    codes = _codes(row[0])
+    if not codes:
+        return "✅ Averías borradas · ahora la centralita no tiene ninguna"
+    return "\n".join(["⚠️ Borradas, pero siguen apareciendo:", *format_codes(codes)])
+
+
+def _process(conn, scan_id, requested_at, now_ms, tz, scan_kind="read_dtc"):
     result = scans.scan_result(conn, scan_id)
     if result is not None:
         kind, ts = result
+        if scan_kind == "clear_dtc":
+            if kind == "done":
+                return kind, _clear_done_text(conn, ts, requested_at)
+            reason = scans.failure_reason(conn, scan_id)
+            return kind, CLEAR_FAILED_TEXTS.get(reason, REJECTED_TEXT)
         return kind, (_done_text(conn, ts, tz) if kind == "done" else FAILED_TEXT)
     if now_ms - requested_at >= scans.SCAN_TIMEOUT_MS:
         return "timeout", TIMEOUT_TEXT
@@ -56,9 +90,9 @@ def _process(conn, scan_id, requested_at, now_ms, tz):
 
 
 def check_scans(conn, client, chat_id: int, now_ms: int, tz: str) -> None:
-    for scan_id, requested_at, _kind in scans.open_scans(conn):
+    for scan_id, requested_at, scan_kind in scans.open_scans(conn):
         try:
-            outcome = _process(conn, scan_id, requested_at, now_ms, tz)
+            outcome = _process(conn, scan_id, requested_at, now_ms, tz, scan_kind)
         except Exception as e:
             # type name only; close the scan so it neither repeats nor blocks others
             log.warning("scan %s failed (%s)", scan_id, type(e).__name__)
