@@ -1,6 +1,7 @@
 package dev.lnk.cartrace.upload
 
 import dev.lnk.cartrace.contract.Batch
+import dev.lnk.cartrace.contract.Command
 import dev.lnk.cartrace.contract.ContractJson
 import dev.lnk.cartrace.contract.IngestResponse
 import dev.lnk.cartrace.queue.ReadyBatch
@@ -24,6 +25,7 @@ class Uploader(
     private val appVersion: String,
     private val offsets: suspend () -> Map<Int, Long>,
     private val currentBoot: () -> Int,
+    private val onCommands: (List<Command>) -> Unit = {},
 ) {
     private val http: OkHttpClient = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
 
@@ -66,6 +68,7 @@ class Uploader(
                     val r = parse((outcome as HttpResult.Response).body)
                         ?: return UploadOutcome.Retry("unexpected response")
                     queue.remove(ready.rowIds.take(count))
+                    if (r.commands.isNotEmpty()) runCatching { onCommands(r.commands) }
                     return UploadOutcome.Sent(r.accepted, r.duplicates, r.rejected.size, r.rejected.firstOrNull()?.error?.take(200))
                 }
                 UploadOutcomeKind.DISCARD -> {

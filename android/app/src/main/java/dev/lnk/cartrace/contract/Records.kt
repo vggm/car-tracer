@@ -77,7 +77,12 @@ data class IngestResponse(
     val accepted: Int,
     val duplicates: Int,
     val rejected: List<Rejected> = emptyList(),
+    val commands: List<Command> = emptyList(),
 )
+
+/** A server request riding on the ingest 200 response; unknown [type]s are ignored by the app. */
+@Serializable
+data class Command(val type: String, val id: String)
 
 object Events {
     const val SESSION_START = "session_start"
@@ -85,6 +90,8 @@ object Events {
     const val OBD_CONNECTED = "obd_connected"
     const val OBD_LOST = "obd_lost"
     const val OBD_ERROR = "obd_error"
+    const val DTC_SCAN = "dtc_scan"
+    const val DTC_SCAN_FAILED = "dtc_scan_failed"
 }
 
 val ContractJson: Json = Json {

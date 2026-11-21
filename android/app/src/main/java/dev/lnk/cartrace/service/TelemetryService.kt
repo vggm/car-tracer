@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.util.Log
 import dev.lnk.cartrace.BuildConfig
 import dev.lnk.cartrace.contract.EventRecord
+import dev.lnk.cartrace.contract.Command
 import dev.lnk.cartrace.contract.Events
 import dev.lnk.cartrace.contract.GpsRecord
 import dev.lnk.cartrace.core.OffsetRecorder
@@ -60,6 +61,7 @@ class TelemetryService : Service() {
     private val sleepDetector by lazy { SleepDetector(graph.clocks, 60_000) }
     private var gps: GpsSource? = null
     private var obdJob: Job? = null
+    @Volatile private var currentObd: ObdSource? = null
     private var started = false
     private val gpsLock = Any()
     private val obdMutex = Mutex()
@@ -174,6 +176,7 @@ class TelemetryService : Service() {
                 OffsetRecorder.usablePersisted(graph.dao.offsets()) + graph.sessionClock.offsets()
             },
             currentBoot = { graph.clocks.bootCount() },
+            onCommands = ::handleCommands,
         )
         return UploadLoop(
             uploadOnce = { uploader.uploadOnce() },
@@ -185,6 +188,27 @@ class TelemetryService : Service() {
             },
         )
     }
+
+    private fun handleCommands(commands: List<Command>) {
+        val s = scope ?: return
+        for (c in commands) {
+            if (c.type != "read_dtc") continue
+            s.launch {
+                safely("read_dtc request") {
+                    val obd = currentObd
+                    if (obd != null) obd.requestDtcScan(c.id) else failDtcScan(c.id)
+                }
+            }
+        }
+    }
+
+    /** No ObdSource (simulated mode without OBD, adapter not configured): answer the request as a failure. */
+    private suspend fun failDtcScan(id: String) {
+        if (!handledNoObd.add(id)) return
+        emitEvent(session.get(), Events.DTC_SCAN_FAILED, "$id obd_not_connected")
+    }
+
+    private val handledNoObd: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private suspend fun restartSources(snap: SettingsSnapshot) {
         val s = scope ?: return
@@ -201,6 +225,7 @@ class TelemetryService : Service() {
     private suspend fun restartObd(snap: SettingsSnapshot = graph.settings.snapshot()) = obdMutex.withLock {
         obdJob?.cancelAndJoin()
         obdJob = null
+        currentObd = null
         if (scope?.isActive != true) return@withLock
         if (!snap.simulated && snap.adapterAddress.isBlank()) {
             Status.setObd(ObdState.Retrying("adapter not configured", 0))
@@ -222,6 +247,7 @@ class TelemetryService : Service() {
                 adapterAddress = snap.adapterAddress,
                 protocolPreference = snap.obdProtocol,
             )
+            currentObd = obd
             coroutineScope {
                 launch { obd.state.collect { Status.setObd(it) } }
                 obd.run()
