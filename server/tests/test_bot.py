@@ -34,9 +34,6 @@ class FakeClient:
     def answer_callback_query(self, callback_query_id):
         self.calls.append(("answer", callback_query_id))
 
-    def send_document(self, chat_id, filename, content):
-        self.calls.append(("document", chat_id, filename, content))
-
     def send_location(self, chat_id, lat, lon):
         self.calls.append(("location", chat_id, lat, lon))
 
@@ -268,7 +265,7 @@ def test_trayectos_empty(conn):
     assert c.calls == [("message", CHAT, "Todavía no hay trayectos.")]
 
 
-def test_callback_trip_answers_detail_and_gpx(conn):
+def test_callback_trip_answers_detail_with_maps_button(conn):
     drive(conn, NOW - 3_600_000)
     c = FakeClient()
     run(msg("/trayectos"), conn, c)
@@ -277,11 +274,31 @@ def test_callback_trip_answers_detail_and_gpx(conn):
     run(cb(data), conn, c2)
     assert c2.calls[0] == ("answer", "q1")
     assert c2.calls[1][0] == "message" and "🕒" in c2.calls[1][2]
+    assert "Sin posiciones GPS" not in c2.calls[1][2]
     assert c2.parse_modes == ["HTML"]
-    kind, chat, name, content = c2.calls[2]
-    assert kind == "document" and chat == CHAT
-    assert name.startswith("trayecto-") and name.endswith(".gpx")
-    assert content.startswith(b"<?xml")
+    button = c2.calls[2][1]["inline_keyboard"][0][0]
+    assert button["text"] == "🗺️ Ver en Google Maps"
+    assert button["url"].startswith("https://www.google.com/maps/dir/?api=1&origin=40.0")
+    assert "travelmode=driving" in button["url"]
+    assert len(c2.calls) == 3
+    assert not [x for x in c2.calls if x[0] == "document"]
+
+
+def test_callback_trip_without_points_has_no_button(conn, monkeypatch):
+    from dataclasses import replace
+
+    from app.bot import commands
+
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+    real = commands.get_trip
+    monkeypatch.setattr(commands, "get_trip", lambda conn, tid: replace(real(conn, tid), points=[]))
+    c2 = FakeClient()
+    run(cb(data), conn, c2)
+    assert [x[0] for x in c2.calls] == ["answer", "message"]
+    assert c2.calls[1][2].endswith("📎 Sin posiciones GPS válidas para la ruta")
 
 
 def test_callback_unknown_trip(conn):
@@ -349,16 +366,10 @@ def test_client_new_methods():
     kb = {"inline_keyboard": [[{"text": "1", "callback_data": "trip:a:1"}]]}
     client.send_message(CHAT, "hi", reply_markup=kb)
     client.answer_callback_query("q9")
-    client.send_document(CHAT, "trayecto-x.gpx", b"<gpx/>")
     assert [r.url.path for r in seen] == [
-        "/botTEST:FAKE/sendMessage", "/botTEST:FAKE/answerCallbackQuery",
-        "/botTEST:FAKE/sendDocument"]
+        "/botTEST:FAKE/sendMessage", "/botTEST:FAKE/answerCallbackQuery"]
     assert json.loads(seen[0].content) == {"chat_id": CHAT, "text": "hi", "reply_markup": kb}
     assert json.loads(seen[1].content) == {"callback_query_id": "q9"}
-    body = seen[2].content
-    assert seen[2].headers["content-type"].startswith("multipart/form-data")
-    assert b'name="chat_id"' in body and b'name="document"' in body
-    assert b'filename="trayecto-x.gpx"' in body and b"<gpx/>" in body
 
 
 def test_send_message_parse_mode_only_when_given():
@@ -375,12 +386,12 @@ def test_send_message_parse_mode_only_when_given():
     assert seen[1] == {"chat_id": CHAT, "text": "<b>x</b>", "parse_mode": "HTML"}
 
 
-def test_send_document_error_hides_token():
+def test_send_message_error_hides_token():
     marker = "TEST:FAKE-MARKER"
     t = httpx.MockTransport(lambda r: httpx.Response(500))
     c = TelegramClient(marker, httpx.Client(transport=t))
     with pytest.raises(botmain.TelegramError) as ei:
-        c.send_document(CHAT, "a.gpx", b"x")
+        c.send_message(CHAT, "x")
     assert marker not in str(ei.value)
 
 

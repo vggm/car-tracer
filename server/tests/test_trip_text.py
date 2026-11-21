@@ -2,7 +2,12 @@ from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.trip_text import format_trip_detail, format_trip_list, trip_list_keyboard
+from urllib.parse import parse_qs, urlsplit
+
+from app.location import GpsPoint, _haversine_m
+from app.trip_text import (
+    format_trip_detail, format_trip_list, maps_url, trip_detail_keyboard, trip_list_keyboard,
+)
 from app.trips import Trip
 
 TZ = "Europe/Madrid"
@@ -138,3 +143,79 @@ def test_midnight_crossing_shows_start_day():
     t = mk("a", ms(2026, 11, 20, 23, 50), ms(2026, 11, 21, 0, 20))
     assert format_trip_detail(t, TZ, True).startswith("🚗 <b>Viernes 20 de noviembre</b>")
     assert "<b>Ayer</b>\n1️⃣ 23:50 → 00:20" in format_trip_list([t], NOW, TZ)
+
+
+def gp(lat, lon, ts=0):
+    return GpsPoint(ts=ts, lat=lat, lon=lon, acc_m=5.0, speed_mps=10.0)
+
+
+def straight(n):
+    return [gp(40.4168 + i * 0.001, -3.7038, ts=i * 1000) for i in range(n)]
+
+
+def query(url):
+    return parse_qs(urlsplit(url).query)
+
+
+def test_maps_url_two_points_no_waypoints():
+    url = maps_url([gp(40.4168, -3.7038), gp(40.4268, -3.6938)])
+    assert url == ("https://www.google.com/maps/dir/?api=1&origin=40.4168%2C-3.7038"
+                   "&destination=40.4268%2C-3.6938&travelmode=driving")
+    assert "waypoints" not in url
+
+
+def test_maps_url_long_route_has_eight_ordered_waypoints():
+    pts = straight(50)
+    url = maps_url(pts)
+    q = query(url)
+    assert q["origin"] == ["40.4168,-3.7038"]
+    assert q["destination"] == [f"{40.4168 + 49 * 0.001:.5f},-3.7038"]
+    wps = q["waypoints"][0].split("|")
+    assert len(wps) == 8
+    lats = [float(w.split(",")[0]) for w in wps]
+    assert lats == sorted(lats) and len(set(lats)) == 8
+    steps = [b - a for a, b in zip([40.4168] + lats, lats + [40.4168 + 49 * 0.001])]
+    assert max(steps) - min(steps) < 0.0025  # roughly even (point granularity 0.001)
+    assert url.index("origin") < url.index("destination") < url.index("travelmode") < url.index("waypoints")
+
+
+def test_maps_url_even_by_distance_not_by_index():
+    # 40 points bunched near the start, 10 spread far away: index sampling would
+    # put all waypoints in the bunch; distance sampling must reach the far part.
+    pts = [gp(40.4168 + i * 0.00001, -3.7038) for i in range(40)]
+    pts += [gp(40.4168 + 0.01 * (j + 1), -3.7038) for j in range(10)]
+    wps = query(maps_url(pts))["waypoints"][0].split("|")
+    assert len(wps) == 8
+    assert float(wps[-1].split(",")[0]) > 40.4168 + 0.05
+
+
+def test_maps_url_coordinates_five_decimals_and_encoding():
+    url = maps_url([gp(40.416812345, -3.703812345), gp(40.426, -3.69), gp(40.43, -3.68)])
+    assert "origin=40.41681%2C-3.70381" in url
+    assert "%7C" not in url or "waypoints" in url
+    url = maps_url(straight(20))
+    assert "%2C" in url and "%7C" in url
+    assert "," not in url.split("?", 1)[1] and "|" not in url
+
+
+def test_maps_url_none_for_few_or_zero_distance_points():
+    assert maps_url([]) is None
+    assert maps_url([gp(40.4168, -3.7038)]) is None
+    assert maps_url([gp(40.4168, -3.7038)] * 5) is None
+
+
+def test_maps_url_skips_repeated_coordinates():
+    pts = [gp(40.4168, -3.7038)] * 5 + [gp(40.4178, -3.7038)] * 5 + [gp(40.4188, -3.7038)] * 5
+    q = query(maps_url(pts))
+    assert q["waypoints"][0].split("|") == ["40.41780,-3.70380"]
+
+
+def test_trip_detail_keyboard_shape():
+    url = maps_url(straight(5))
+    assert trip_detail_keyboard(straight(5)) == {
+        "inline_keyboard": [[{"text": "🗺️ Ver en Google Maps", "url": url}]]}
+
+
+def test_trip_detail_keyboard_none_without_url():
+    assert trip_detail_keyboard([]) is None
+    assert trip_detail_keyboard([gp(40.4168, -3.7038)]) is None
