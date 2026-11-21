@@ -8,9 +8,8 @@ from app.dtc import format_averias, format_codes, latest_dtc
 from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
 from app.scans import create_scan
-from app.trip_text import (
-    format_trip_detail, format_trip_list, maps_url, trip_detail_keyboard, trip_list_keyboard,
-)
+from app.route_map import render_route_png
+from app.trip_text import format_trip_detail, format_trip_list, has_route, trip_list_keyboard
 from app.trips import get_trip, list_trips
 from app.vehicle import format_estado
 
@@ -60,7 +59,14 @@ def _send_trip_list(client, chat_id, conn, now_ms, tz, before_ts, empty_text) ->
                         reply_markup=trip_list_keyboard(trips, has_more), parse_mode="HTML")
 
 
-def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
+CAPTION_LIMIT = 1024
+
+
+def _send_trip_text(client, chat_id, text: str) -> None:
+    client.send_message(chat_id, text, parse_mode="HTML")
+
+
+def _send_trip(client, chat_id, conn, tz, trip_id: str, fetch_tile=None) -> None:
     _, sep, start = trip_id.rpartition(":")
     if not sep or not start.isdigit():
         return  # malformed
@@ -68,9 +74,22 @@ def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
     if trip is None:
         client.send_message(chat_id, "Ese trayecto ya no está disponible.")
         return
-    client.send_message(chat_id,
-                        format_trip_detail(trip, tz, maps_url(trip.points) is not None),
-                        reply_markup=trip_detail_keyboard(trip.points), parse_mode="HTML")
+    route = has_route(trip.points)
+    text = format_trip_detail(trip, tz, route)
+    if not route or fetch_tile is None:
+        _send_trip_text(client, chat_id, text)
+        return
+    try:
+        png = render_route_png(trip.points, fetch_tile)
+        short = len(text) <= CAPTION_LIMIT
+        client.send_photo(chat_id, png, caption=text if short else "", parse_mode="HTML")
+    except Exception as e:
+        # type name only: the message or URL may carry the bot credential
+        log.warning("trip route image failed: %s", type(e).__name__)
+        _send_trip_text(client, chat_id, text)
+        return
+    if not short:
+        _send_trip_text(client, chat_id, text)
 
 
 def _clear_gate(conn, now_ms) -> str | None:
@@ -118,7 +137,7 @@ def _confirm_clear(client, chat_id, conn, now_ms, cid: str) -> None:
     client.send_message(chat_id, "🗑️ Borrando…")
 
 
-def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
+def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz, fetch_tile=None) -> None:
     message = query.get("message")
     chat = message.get("chat") if isinstance(message, dict) else None
     if not isinstance(chat, dict) or chat.get("id") != chat_id:
@@ -136,7 +155,7 @@ def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
         return
     kind, _, arg = data.partition(":")
     if kind == "trip" and arg:
-        _send_trip(client, chat_id, conn, tz, arg)
+        _send_trip(client, chat_id, conn, tz, arg, fetch_tile)
     elif kind == "trips" and arg.isdigit():
         _send_trip_list(client, chat_id, conn, now_ms, tz, int(arg),
                         "No hay trayectos anteriores.")
@@ -147,10 +166,11 @@ def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
         client.send_message(chat_id, CLEAR_CANCELLED)
 
 
-def handle_update(update: dict, *, chat_id: int, client, conn, now_ms: int, tz: str) -> None:
+def handle_update(update: dict, *, chat_id: int, client, conn, now_ms: int, tz: str,
+                  fetch_tile=None) -> None:
     if isinstance(update, dict) and isinstance(update.get("callback_query"), dict):
         _handle_callback(update["callback_query"], chat_id=chat_id, client=client,
-                         conn=conn, now_ms=now_ms, tz=tz)
+                         conn=conn, now_ms=now_ms, tz=tz, fetch_tile=fetch_tile)
         return
     message = update.get("message") if isinstance(update, dict) else None
     if not isinstance(message, dict):

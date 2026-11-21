@@ -13,10 +13,13 @@ class TelegramClient:
         self._base = f"{API}/bot{token}"
         self._http = http
 
-    def _call(self, method: str, payload: dict):
+    def _call(self, method: str, payload: dict, files: dict | None = None):
         # Errors are raised without the URL so the token never reaches logs.
         try:
-            resp = self._http.post(f"{self._base}/{method}", json=payload)
+            if files is None:
+                resp = self._http.post(f"{self._base}/{method}", json=payload)
+            else:
+                resp = self._http.post(f"{self._base}/{method}", data=payload, files=files)
             resp.raise_for_status()
             body = resp.json()
         except httpx.HTTPStatusError as e:
@@ -43,6 +46,12 @@ class TelegramClient:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         self._call("sendMessage", payload)
+
+    def send_photo(self, chat_id, photo: bytes, caption: str, parse_mode: str | None = None):
+        data: dict = {"chat_id": str(chat_id), "caption": caption}
+        if parse_mode is not None:
+            data["parse_mode"] = parse_mode
+        self._call("sendPhoto", data, files={"photo": ("route.png", photo, "image/png")})
 
     def answer_callback_query(self, callback_query_id: str):
         self._call("answerCallbackQuery", {"callback_query_id": callback_query_id})
