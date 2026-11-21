@@ -53,4 +53,4 @@ def test_when():
 
 
 def test_long_day():
-    assert fmt.long_day(ms(2026, 11, 20, 18, 12), TZ) == "jue 20 nov"
+    assert fmt.long_day(ms(2026, 11, 19, 18, 12), TZ) == "jue 19 nov"

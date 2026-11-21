@@ -3,9 +3,9 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
-from zoneinfo import ZoneInfo
+
+from app import fmt
 
 MAX_ACC_M = 50.0
 MAX_SPEED_MPS = 70.0
@@ -137,23 +137,10 @@ def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
     return CarStatus(state, last_ts, point, speed, engine_on)
 
 
-def _rel(delta_ms: int) -> str:
-    s = max(0, delta_ms) // 1000
-    if s < 60:
-        return f"{s} s"
-    if s < 3600:
-        return f"{s // 60} min"
-    return f"{s // 3600} h {(s % 3600) // 60} min"
-
-
-def _hhmm(ts_ms: int, tz: str) -> str:
-    return datetime.fromtimestamp(ts_ms / 1000, ZoneInfo(tz)).strftime("%H:%M")
-
-
 def format_status(status: CarStatus, now_ms: int, tz: str) -> str:
     if status.state == "no_data" or status.last_ts is None:
         return "Todavía no hay datos del coche."
-    rel = _rel(now_ms - status.last_ts)
+    rel = fmt.rel(now_ms - status.last_ts)
     if status.state == "moving":
         text = f"🚗 En marcha · último dato hace {rel}"
         if status.speed_kmh is not None:
@@ -165,11 +152,11 @@ def format_status(status: CarStatus, now_ms: int, tz: str) -> str:
     elif status.state == "stopped":
         text = f"⏸️ Parado · último dato hace {rel}"
     elif status.state == "no_signal":
-        text = f"📵 Sin señal desde las {_hhmm(status.last_ts, tz)} · iba en marcha"
+        text = f"📵 Sin señal desde las {fmt.hhmm(status.last_ts, tz)} · iba en marcha"
     else:
-        text = f"🅿️ Aparcado desde las {_hhmm(status.last_ts, tz)} (hace {rel})"
+        text = f"🅿️ Aparcado desde las {fmt.hhmm(status.last_ts, tz)} (hace {rel})"
         if status.point is not None and status.last_ts - status.point.ts > GPS_GAP_MS:
-            text += f"\nÚltima posición GPS de las {_hhmm(status.point.ts, tz)}"
+            text += f"\nÚltima posición GPS de las {fmt.hhmm(status.point.ts, tz)}"
     if status.point is None:
         text += "\nSin posición GPS todavía."
     return text
