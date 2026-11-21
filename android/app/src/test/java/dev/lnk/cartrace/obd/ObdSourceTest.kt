@@ -692,6 +692,65 @@ class ObdSourceTest {
     }
 
     @Test
+    fun dtcClearReadsRpmFreshAndRefusesWhenRunning() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = engineOff
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        transport.rpmAnswer = "41 0C 0C 80\r\r>" // started after the last poll sample
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x engine_running"), clearFailures())
+        assertFalse("04" in log)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWithoutRpmValueIsObdErrorAndNeverSends04() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = "NO DATA\r\r>"
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x obd_error"), clearFailures())
+        assertFalse("04" in log)
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWithRpmZeroSends04() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = engineOff
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertTrue("04" in log)
+        assertEquals(1, events().count { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun queuedClearIsFailedWhenLinkDropsBeforeItRuns() = runTest {
+        val (src, transport, job) = connectedStopped()
+        advanceTimeBy(100)
+        transport.failOn04 = true
+        src.requestDtcClear("a")
+        src.requestDtcClear("b")
+        advanceTimeBy(500)
+        assertEquals(listOf("a obd_error", "b obd_not_connected"), clearFailures())
+        job.cancel()
+    }
+
+    @Test
     fun eventDetailTruncatedTo200() = runTest {
         val src = source { ScriptedTransport(mutableListOf(), failAfter = 20, lostMessage = "x".repeat(500)) }
         val job = launch { src.run() }

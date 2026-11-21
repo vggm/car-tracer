@@ -76,23 +76,20 @@ class ObdSource(
         }
     }
 
-    /** Poll clock time and value of the last OBD sample with an rpm; null while none on this link. */
-    private var lastRpmAt: Long? = null
-    private var lastRpm = 0.0
-
-    private fun engineRunning(): Boolean {
-        val at = lastRpmAt ?: return false
-        return nowMs() - at < ENGINE_RUNNING_WINDOW_MS && lastRpm > 0
-    }
-
     private suspend fun runPendingClears(t: ElmTransport) {
         while (true) {
             val id = pendingClears.poll() ?: return
-            if (engineRunning()) {
-                send(Events.DTC_CLEAR_FAILED, "$id engine_running")
-                continue
-            }
+            // Destructive: never trust an old sample; only a fresh rpm of exactly 0 allows 04.
             val accepted = try {
+                val rpm = ElmParser.value(Pid.RPM, t.command(Pid.RPM.cmd))
+                if (rpm == null) {
+                    send(Events.DTC_CLEAR_FAILED, "$id obd_error")
+                    continue
+                }
+                if (rpm > 0) {
+                    send(Events.DTC_CLEAR_FAILED, "$id engine_running")
+                    continue
+                }
                 ElmParser.clean(t.command("04", LONG_TIMEOUT)).any { it.startsWith("44") }
             } catch (e: CancellationException) {
                 throw e
@@ -273,18 +270,12 @@ class ObdSource(
         val pids = Pid.entries.filter { it.cmd in supported }
         val fresh = linkedMapOf<String, Double>()
         var lastEmit = nowMs()
-        lastRpmAt = null
-        lastRpm = 0.0
         var lastVoltage = Long.MIN_VALUE
         while (true) {
             runPendingScans(t)
             for (pid in pids) {
                 val v = ElmParser.value(pid, t.command(pid.cmd)) ?: continue
                 fresh[pid.key] = v
-                if (pid.key == "rpm") {
-                    lastRpmAt = nowMs()
-                    lastRpm = v
-                }
             }
             val now = nowMs()
             if (lastVoltage == Long.MIN_VALUE || now - lastVoltage >= VOLTAGE_EVERY_MS) {
@@ -324,7 +315,6 @@ class ObdSource(
         const val EMIT_EVERY_MS = 3_000L
         const val VOLTAGE_EVERY_MS = 60_000L
         const val UNABLE_LIMIT = 3
-        const val ENGINE_RUNNING_WINDOW_MS = 10_000L
         const val LONG_TIMEOUT = 10_000L
         const val FIRST_PID_TIMEOUT = 30_000L
         const val MAX_DETAIL = 200
