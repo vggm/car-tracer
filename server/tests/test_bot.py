@@ -14,7 +14,8 @@ from app.db import connect
 CHAT = 42
 START_TEXT_EXPECTED = (
     "Comandos:\n/donde · dónde está el coche\n/trayectos · últimos trayectos\n"
-    "/estado · motor y batería\n/averias · averías guardadas")
+    "/estado · motor y batería\n/averias · averías guardadas\n"
+    "/escanear · leer averías ahora")
 NOW = 1_700_000_000_000
 
 

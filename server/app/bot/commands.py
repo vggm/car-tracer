@@ -19,7 +19,8 @@ START_TEXT = (
     "/donde · dónde está el coche\n"
     "/trayectos · últimos trayectos\n"
     "/estado · motor y batería\n"
-    "/averias · averías guardadas"
+    "/averias · averías guardadas\n"
+    "/escanear · leer averías ahora"
 )
 
 APAGADO_TEXT = (
