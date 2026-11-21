@@ -57,14 +57,68 @@ class ObdSource(
         if (_state.value !is ObdState.Connected) failPendingScans()
     }
 
+    private val pendingClears = ConcurrentLinkedQueue<String>()
+    /** Server asked to clear the stored DTCs (mode 04). Same dedupe and queueing rules as [requestDtcScan]. */
+    suspend fun requestDtcClear(id: String) {
+        if (!handledScans.add(id)) return
+        pendingClears.add(id)
+        if (_state.value !is ObdState.Connected) failPendingScans()
+    }
+
     private suspend fun failPendingScans() {
         while (true) {
-            val id = pendingScans.poll() ?: return
+            val id = pendingScans.poll() ?: break
             send(Events.DTC_SCAN_FAILED, "$id obd_not_connected")
+        }
+        while (true) {
+            val id = pendingClears.poll() ?: break
+            send(Events.DTC_CLEAR_FAILED, "$id obd_not_connected")
+        }
+    }
+
+    /** Poll clock time and value of the last OBD sample with an rpm; null while none on this link. */
+    private var lastRpmAt: Long? = null
+    private var lastRpm = 0.0
+
+    private fun engineRunning(): Boolean {
+        val at = lastRpmAt ?: return false
+        return nowMs() - at < ENGINE_RUNNING_WINDOW_MS && lastRpm > 0
+    }
+
+    private suspend fun runPendingClears(t: ElmTransport) {
+        while (true) {
+            val id = pendingClears.poll() ?: return
+            if (engineRunning()) {
+                send(Events.DTC_CLEAR_FAILED, "$id engine_running")
+                continue
+            }
+            val accepted = try {
+                ElmParser.clean(t.command("04", LONG_TIMEOUT)).any { it.startsWith("44") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                send(Events.DTC_CLEAR_FAILED, "$id obd_error")
+                throw e
+            }
+            if (!accepted) {
+                send(Events.DTC_CLEAR_FAILED, "$id rejected")
+                continue
+            }
+            try {
+                readDtcs(t, strict = true) // emits the record only when the re-read is valid
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // the clear itself was accepted: report it, then let the link recover
+                send(Events.DTC_CLEAR, id)
+                throw e
+            }
+            send(Events.DTC_CLEAR, id)
         }
     }
 
     private suspend fun runPendingScans(t: ElmTransport) {
+        runPendingClears(t)
         while (true) {
             val id = pendingScans.poll() ?: return
             try {
@@ -219,10 +273,19 @@ class ObdSource(
         val pids = Pid.entries.filter { it.cmd in supported }
         val fresh = linkedMapOf<String, Double>()
         var lastEmit = nowMs()
+        lastRpmAt = null
+        lastRpm = 0.0
         var lastVoltage = Long.MIN_VALUE
         while (true) {
             runPendingScans(t)
-            for (pid in pids) ElmParser.value(pid, t.command(pid.cmd))?.let { fresh[pid.key] = it }
+            for (pid in pids) {
+                val v = ElmParser.value(pid, t.command(pid.cmd)) ?: continue
+                fresh[pid.key] = v
+                if (pid.key == "rpm") {
+                    lastRpmAt = nowMs()
+                    lastRpm = v
+                }
+            }
             val now = nowMs()
             if (lastVoltage == Long.MIN_VALUE || now - lastVoltage >= VOLTAGE_EVERY_MS) {
                 lastVoltage = now
@@ -261,6 +324,7 @@ class ObdSource(
         const val EMIT_EVERY_MS = 3_000L
         const val VOLTAGE_EVERY_MS = 60_000L
         const val UNABLE_LIMIT = 3
+        const val ENGINE_RUNNING_WINDOW_MS = 10_000L
         const val LONG_TIMEOUT = 10_000L
         const val FIRST_PID_TIMEOUT = 30_000L
         const val MAX_DETAIL = 200
