@@ -192,20 +192,28 @@ class TelemetryService : Service() {
     private fun handleCommands(commands: List<Command>) {
         val s = scope ?: return
         for (c in commands) {
-            if (c.type != "read_dtc") continue
+            val clear = when (c.type) {
+                "read_dtc" -> false
+                "clear_dtc" -> true
+                else -> continue
+            }
             s.launch {
-                safely("read_dtc request") {
+                safely("${c.type} request") {
                     val obd = currentObd
-                    if (obd != null) obd.requestDtcScan(c.id) else failDtcScan(c.id)
+                    when {
+                        obd == null -> failDtcRequest(c.id, if (clear) Events.DTC_CLEAR_FAILED else Events.DTC_SCAN_FAILED)
+                        clear -> obd.requestDtcClear(c.id)
+                        else -> obd.requestDtcScan(c.id)
+                    }
                 }
             }
         }
     }
 
     /** No ObdSource (simulated mode without OBD, adapter not configured): answer the request as a failure. */
-    private suspend fun failDtcScan(id: String) {
+    private suspend fun failDtcRequest(id: String, failedEvent: String) {
         if (!handledScans.add(id)) return
-        emitEvent(session.get(), Events.DTC_SCAN_FAILED, "$id obd_not_connected")
+        emitEvent(session.get(), failedEvent, "$id obd_not_connected")
         uploadLoop?.resetBackoff() // the bot is waiting: do not sit out the upload interval
     }
 
@@ -334,7 +342,7 @@ class TelemetryService : Service() {
     }
 
     private companion object {
-        val SCAN_RESULT_EVENTS = setOf(Events.DTC_SCAN, Events.DTC_SCAN_FAILED)
+        val SCAN_RESULT_EVENTS = setOf(Events.DTC_SCAN, Events.DTC_SCAN_FAILED, Events.DTC_CLEAR, Events.DTC_CLEAR_FAILED)
         const val TAG = "CarTrace"
         const val CHANNEL_ID = "telemetry"
         const val NOTIFICATION_ID = 307

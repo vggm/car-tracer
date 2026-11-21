@@ -38,12 +38,16 @@ private class ScriptedTransport(
     var closed = false
     var failOn03 = false
     var answer03: String? = null
+    var answer04: String = "44\r\r>"
+    var failOn04 = false
+    var rpmAnswer = "41 0C 1A F8\r\r>"
     private var count = 0
     private var lastSp = ""
     override suspend fun open() { openError?.let { throw it } }
     override suspend fun command(cmd: String, timeoutMs: Long): String {
         if (count++ >= failAfter) throw IOException(lostMessage)
         if (failOn03 && cmd == "03") throw IOException("link lost mid-scan")
+        if (failOn04 && cmd == "04") throw IOException("link lost mid-clear")
         log += cmd
         timeouts.putIfAbsent(cmd, timeoutMs)
         if (cmd.startsWith("ATSP")) lastSp = cmd
@@ -56,7 +60,8 @@ private class ScriptedTransport(
             "03" -> answer03 ?: "43 01 33 00 00 00 00\r\r>"
             "07" -> "47 02 00 00 00 00 00\r\r>"
             "ATRV" -> "12.6V\r\r>"
-            "010C" -> "41 0C 1A F8\r\r>"
+            "04" -> answer04
+            "010C" -> rpmAnswer
             "010D" -> "41 0D 32\r\r>"
             "0105" -> "41 05 5A\r\r>"
             "010B" -> "41 0B 63\r\r>"
@@ -558,6 +563,191 @@ class ObdSourceTest {
         a.requestDtcScan("x")
         b.requestDtcScan("x")
         assertEquals(1, events().count { it.event == Events.DTC_SCAN_FAILED })
+    }
+
+    private val engineOff = "41 0C 00 00\r\r>"
+
+    private fun TestScope.connectedStopped(configure: (ScriptedTransport) -> Unit = {}): Triple<ObdSource, ScriptedTransport, kotlinx.coroutines.Job> {
+        val transport = ScriptedTransport(mutableListOf())
+        transport.rpmAnswer = engineOff
+        configure(transport)
+        val src = source { transport }
+        val job = launch { src.run() }
+        return Triple(src, transport, job)
+    }
+
+    private fun clearFailures() = events().filter { it.event == Events.DTC_CLEAR_FAILED }.map { it.detail }
+
+    @Test
+    fun dtcClearAcceptedRereadsThenEmitsEvent() = runTest {
+        val (src, transport, job) = connectedStopped()
+        advanceTimeBy(100)
+        records.clear()
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        val relevant = records.filter { it is DtcRecord || (it is EventRecord && it.event == Events.DTC_CLEAR) }
+        assertEquals(2, relevant.size)
+        assertTrue(relevant[0] is DtcRecord)
+        assertEquals("x", (relevant[1] as EventRecord).detail)
+        assertEquals(session.id, (relevant[0] as DtcRecord).session_id)
+        assertEquals(10_000L, transport.timeouts["04"])
+        assertTrue(clearFailures().isEmpty())
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearNegativeResponseIsRejected() = runTest {
+        val (src, _, job) = connectedStopped { it.answer04 = "7F 04 22\r\r>" }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x rejected"), clearFailures())
+        assertTrue(events().none { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearElmErrorIsRejected() = runTest {
+        val (src, _, job) = connectedStopped { it.answer04 = "?\r\r>" }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x rejected"), clearFailures())
+        assertTrue(events().none { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWithEngineRunningNeverSendsMode04() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x engine_running"), clearFailures())
+        assertFalse("04" in log)
+        assertTrue(events().none { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWhenNotConnectedEmitsFailureImmediately() = runTest {
+        val src = source { ScriptedTransport(mutableListOf()) }
+        src.requestDtcClear("x")
+        assertEquals(listOf("x obd_not_connected"), clearFailures())
+        src.requestDtcClear("x")
+        assertEquals(1, events().size)
+    }
+
+    @Test
+    fun dtcClearLinkFailureEmitsObdErrorAndDropsLink() = runTest {
+        val (src, transport, job) = connectedStopped()
+        advanceTimeBy(100)
+        transport.failOn04 = true
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x obd_error"), clearFailures())
+        assertTrue(src.state.value is ObdState.Retrying)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearRereadErrorStillEmitsEventWithoutDtcRecord() = runTest {
+        val (src, transport, job) = connectedStopped()
+        advanceTimeBy(100)
+        records.clear()
+        transport.answer03 = "STOPPED\r\r>"
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x"), events().filter { it.event == Events.DTC_CLEAR }.map { it.detail })
+        assertTrue(records.none { it is DtcRecord })
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearSameIdTwiceIsHandledOnce() = runTest {
+        val (src, _, job) = connectedStopped()
+        advanceTimeBy(100)
+        records.clear()
+        src.requestDtcClear("x")
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(1, events().count { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun clearAndScanWithDifferentIdsAreBothHandled() = runTest {
+        val (src, _, job) = connectedStopped()
+        advanceTimeBy(100)
+        records.clear()
+        src.requestDtcClear("c")
+        src.requestDtcScan("s")
+        advanceTimeBy(500)
+        assertEquals(listOf("c"), events().filter { it.event == Events.DTC_CLEAR }.map { it.detail })
+        assertEquals(listOf("s"), events().filter { it.event == Events.DTC_SCAN }.map { it.detail })
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearReadsRpmFreshAndRefusesWhenRunning() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = engineOff
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        transport.rpmAnswer = "41 0C 0C 80\r\r>" // started after the last poll sample
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x engine_running"), clearFailures())
+        assertFalse("04" in log)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWithoutRpmValueIsObdErrorAndNeverSends04() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = "NO DATA\r\r>"
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x obd_error"), clearFailures())
+        assertFalse("04" in log)
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcClearWithRpmZeroSends04() = runTest {
+        val log = mutableListOf<String>()
+        val transport = ScriptedTransport(log)
+        transport.rpmAnswer = engineOff
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        src.requestDtcClear("x")
+        advanceTimeBy(500)
+        assertTrue("04" in log)
+        assertEquals(1, events().count { it.event == Events.DTC_CLEAR })
+        job.cancel()
+    }
+
+    @Test
+    fun queuedClearIsFailedWhenLinkDropsBeforeItRuns() = runTest {
+        val (src, transport, job) = connectedStopped()
+        advanceTimeBy(100)
+        transport.failOn04 = true
+        src.requestDtcClear("a")
+        src.requestDtcClear("b")
+        advanceTimeBy(500)
+        assertEquals(listOf("a obd_error", "b obd_not_connected"), clearFailures())
+        job.cancel()
     }
 
     @Test
