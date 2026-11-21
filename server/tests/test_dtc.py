@@ -87,6 +87,17 @@ def test_averias_pending_different(tmp_path):
     )
 
 
+def test_averias_pending_only(tmp_path):
+    c = _conn(tmp_path)
+    add_dtc(c, NOW - 60_000, [], ["P0409"])
+    from app import fmt
+    assert dtc.format_averias(c, NOW, TZ) == (
+        f"⚠️ Averías guardadas · leídas {fmt.when(NOW - 60_000, NOW, TZ)}\n"
+        "Pendientes:\n"
+        "• P0409 · Circuito del sensor de la EGR"
+    )
+
+
 def test_averias_no_pending_line_omitted(tmp_path):
     c = _conn(tmp_path)
     add_dtc(c, NOW - 60_000, ["P0401"], [])

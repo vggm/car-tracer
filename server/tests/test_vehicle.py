@@ -75,6 +75,15 @@ def test_dtc_lines(tmp_path):
     assert format_estado(c, NOW, TZ).endswith("⚠️ 1 avería guardada · /averias")
 
 
+def test_dtc_pending_counts_as_stored(tmp_path):
+    c = _conn(tmp_path)
+    obd(c, T, coolant_c=85, rpm=741)
+    add(c, T, "dtc", {"active": [], "pending": ["P0409"]})
+    assert format_estado(c, NOW, TZ).endswith("⚠️ 1 avería guardada · /averias")
+    add(c, T + 1, "dtc", {"active": ["P0401", "P0409"], "pending": ["P0409", "P0420"]})
+    assert format_estado(c, NOW, TZ).endswith("⚠️ 3 averías guardadas · /averias")
+
+
 def test_no_engine_data(tmp_path):
     assert format_estado(_conn(tmp_path), NOW, TZ) == "Todavía no hay datos del motor."
 

@@ -45,7 +45,7 @@ def format_estado(conn: sqlite3.Connection, now_ms: int, tz: str) -> str:
         lines.append(f"⚙️ Revoluciones: {fmt.num(engine[1]['rpm'])} rpm")
     dtc = latest_dtc(conn)
     if dtc is not None:
-        n = len(dtc[1])
+        n = len(dict.fromkeys([*dtc[1], *dtc[2]]))
         if n == 0:
             lines.append("✅ Sin averías guardadas")
         elif n == 1:
