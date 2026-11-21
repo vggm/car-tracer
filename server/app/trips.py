@@ -159,7 +159,7 @@ def _session_segments(
     return segments
 
 
-def _session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
+def session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
     """All trips of a session, oldest first."""
     trips = (_build(conn, session_id, seg) for seg in _session_segments(conn, session_id))
     return [t for t in trips if t is not None]
@@ -176,7 +176,7 @@ def list_trips(
     ).fetchall()
     found: list[Trip] = []
     for session_id, _ in sessions:
-        for trip in reversed(_session_trips(conn, session_id)):
+        for trip in reversed(session_trips(conn, session_id)):
             if before_ts is None or trip.start_ts < before_ts:
                 found.append(trip)
         if len(found) > limit:
