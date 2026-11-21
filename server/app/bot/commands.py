@@ -3,7 +3,8 @@ import logging
 
 import httpx
 
-from app.dtc import format_averias
+from app.confirmations import consume_confirmation, create_confirmation
+from app.dtc import format_averias, format_codes, latest_dtc
 from app.gpx import to_gpx
 from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
@@ -20,8 +21,23 @@ START_TEXT = (
     "/trayectos · últimos trayectos\n"
     "/estado · motor y batería\n"
     "/averias · averías guardadas\n"
-    "/escanear · leer averías ahora"
+    "/escanear · leer averías ahora\n"
+    "/borrar_averias · borrar averías de la centralita"
 )
+
+CLEAR_GATE_TEXTS = {
+    "moving": "🔑 Para borrar, pon el contacto con el motor apagado y vuelve a mandar /borrar_averias.",
+    "idle": "🔑 Para borrar, pon el contacto con el motor apagado y vuelve a mandar /borrar_averias.",
+    "parked": "🅿️ El coche está apagado. Pon el contacto (sin arrancar) y manda /borrar_averias.",
+    "no_signal": "🅿️ El coche está apagado. Pon el contacto (sin arrancar) y manda /borrar_averias.",
+    "no_data": "🅿️ El coche está apagado. Pon el contacto (sin arrancar) y manda /borrar_averias.",
+    "stopped": "⚠️ La tablet no está conectada al ELM327 ahora mismo.",
+}
+CLEAR_WARNING = (
+    "No arregla nada: si el fallo sigue, volverá a aparecer. "
+    "También se reinician las pruebas de emisiones."
+)
+CLEAR_CANCELLED = "Borrado cancelado."
 
 APAGADO_TEXT = (
     "🅿️ El coche está apagado. Las averías se leen solas cada vez que arranca; "
@@ -57,6 +73,51 @@ def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
         client.send_document(chat_id, filename, content)
 
 
+def _clear_gate(conn, now_ms) -> str | None:
+    """Spanish refusal text unless the car is ready (engine_off)."""
+    state = car_status(conn, now_ms).state
+    return None if state == "engine_off" else CLEAR_GATE_TEXTS.get(state, CLEAR_GATE_TEXTS["stopped"])
+
+
+def _confirmation_text(conn) -> str:
+    latest = latest_dtc(conn)
+    codes: list[str] = []
+    if latest is not None:
+        for c in latest[1] + latest[2]:
+            if c not in codes:
+                codes.append(c)
+    if codes:
+        head = "🗑️ Vas a borrar las averías guardadas en la centralita:\n" + "\n".join(format_codes(codes))
+    else:
+        head = ("🗑️ Vas a borrar las averías guardadas en la centralita "
+                "(la última lectura no tenía ninguna).")
+    return f"{head}\n\n{CLEAR_WARNING}"
+
+
+def _start_clear(client, chat_id, conn, now_ms) -> None:
+    refusal = _clear_gate(conn, now_ms)
+    if refusal is not None:
+        client.send_message(chat_id, refusal)
+        return
+    cid = create_confirmation(conn, now_ms)
+    client.send_message(chat_id, _confirmation_text(conn), reply_markup={"inline_keyboard": [[
+        {"text": "🗑️ Sí, borrar", "callback_data": f"clear:{cid}"},
+        {"text": "Cancelar", "callback_data": f"clearno:{cid}"},
+    ]]})
+
+
+def _confirm_clear(client, chat_id, conn, now_ms, cid: str) -> None:
+    if not consume_confirmation(conn, cid, now_ms):
+        client.send_message(chat_id, CLEAR_CANCELLED)
+        return
+    refusal = _clear_gate(conn, now_ms)
+    if refusal is not None:
+        client.send_message(chat_id, refusal)
+        return
+    create_scan(conn, now_ms, kind="clear_dtc")
+    client.send_message(chat_id, "🗑️ Borrando…")
+
+
 def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
     message = query.get("message")
     chat = message.get("chat") if isinstance(message, dict) else None
@@ -79,6 +140,11 @@ def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
     elif kind == "trips" and arg.isdigit():
         _send_trip_list(client, chat_id, conn, now_ms, tz, int(arg),
                         "No hay trayectos anteriores.")
+    elif kind == "clear" and arg:
+        _confirm_clear(client, chat_id, conn, now_ms, arg)
+    elif kind == "clearno" and arg:
+        consume_confirmation(conn, arg, now_ms)
+        client.send_message(chat_id, CLEAR_CANCELLED)
 
 
 def handle_update(update: dict, *, chat_id: int, client, conn, now_ms: int, tz: str) -> None:
@@ -111,5 +177,7 @@ def handle_update(update: dict, *, chat_id: int, client, conn, now_ms: int, tz: 
         else:
             create_scan(conn, now_ms)
             client.send_message(chat_id, "🔍 Leyendo averías… (tarda menos de un minuto)")
+    elif cmd == "/borrar_averias":
+        _start_clear(client, chat_id, conn, now_ms)
     elif cmd == "/start":
         client.send_message(chat_id, START_TEXT)

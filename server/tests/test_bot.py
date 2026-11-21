@@ -421,7 +421,7 @@ def add_obd(conn, ts, rpm):
     conn.execute(
         "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
         " VALUES (?,?,?,?,?,?,?,?)",
-        (f"o{ts}", "d", "s", 2, ts, "obd", json.dumps({"rpm": rpm, "speed_kmh": 0}), ts),
+        (f"o{ts}", "d", "s", 2, ts, "obd", json.dumps({"values": {"rpm": rpm, "speed_kmh": 0}}), ts),
     )
 
 
@@ -453,7 +453,7 @@ def test_borrar_parked_no_data(conn):
     run(msg("/borrar_averias"), conn, c)  # no_data
     assert c.calls == [("message", CHAT, CAR_OFF)]
     c = FakeClient()
-    add_gps(conn, NOW - 200_000)
+    add_gps(conn, NOW - 400_000)
     run(msg("/borrar_averias"), conn, c)  # parked
     assert c.calls == [("message", CHAT, CAR_OFF)]
     assert conn.execute("SELECT COUNT(*) FROM clear_confirmations").fetchone()[0] == 0
@@ -471,7 +471,11 @@ def test_borrar_engine_running(conn):
 def test_borrar_moving(conn):
     add_gps(conn, NOW - 5_000)
     add_gps(conn, NOW - 2_000, lat=40.001)
-    add_obd(conn, NOW - 1_000, 2000)
+    conn.execute(
+        "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        ("om", "d", "s", 2, NOW - 1_000, "obd",
+         json.dumps({"values": {"rpm": 2000, "speed_kmh": 50}}), NOW))
     c = FakeClient()
     run(msg("/borrar_averias"), conn, c)
     assert c.calls == [("message", CHAT, ENGINE_RUNNING)]

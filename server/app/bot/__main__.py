@@ -66,6 +66,7 @@ def main() -> int:
             ("estado", "Motor y batería"),
             ("averias", "Averías guardadas"),
             ("escanear", "Leer averías ahora"),
+            ("borrar_averias", "Borrar averías de la centralita"),
         ])
     except (httpx.HTTPError, TelegramError) as e:
         log.warning("setMyCommands failed (%s)", type(e).__name__)
