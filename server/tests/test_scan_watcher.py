@@ -109,3 +109,44 @@ def test_run_watcher_survives_errors(tmp_path, monkeypatch):
         run_watcher(str(tmp_path / "r.db"), FakeClient(), CHAT, TZ, sleep=sleeps.append)
     assert len(calls) == 3
     assert sleeps == [scan_watcher.SCAN_POLL_S] * 2
+
+
+def test_first_reading_marks_nothing_new(conn):
+    sid = scans.create_scan(conn, NOW)
+    add_dtc(conn, "b", NOW + 5_000, ["P0401"])
+    add_result(conn, sid, NOW + 5_001)
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert "🆕" not in c.sent[0][1]
+
+
+def test_failing_scan_is_isolated_and_closed(conn):
+    bad = scans.create_scan(conn, NOW)
+    add_dtc(conn, "bad", NOW + 1_000, [])
+    conn.execute("UPDATE records SET data='not json' WHERE id='bad'")
+    add_result(conn, bad, NOW + 1_001)
+    good = scans.create_scan(conn, NOW + 10)
+    add_result(conn, good, NOW + 2_000, "dtc_scan_failed", " obd_not_connected")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 5_000, TZ)
+    assert c.sent == [(CHAT, "⚠️ La tablet no está conectada al ELM327 ahora mismo.")]
+    assert scans.open_scans(conn) == []
+
+
+def test_send_failure_does_not_stop_pass_or_reopen(conn):
+    from app.bot.telegram import TelegramError
+    for i, t in enumerate((0, 10)):
+        sid = scans.create_scan(conn, NOW + t)
+        add_result(conn, sid, NOW + 1_000 + i, "dtc_scan_failed", " x")
+
+    class Flaky(FakeClient):
+        def send_message(self, chat_id, text, reply_markup=None):
+            if not self.sent and not getattr(self, "tried", False):
+                self.tried = True
+                raise TelegramError("boom")
+            super().send_message(chat_id, text)
+
+    c = Flaky()
+    check_scans(conn, c, CHAT, NOW + 5_000, TZ)
+    assert len(c.sent) == 1
+    assert scans.open_scans(conn) == []
