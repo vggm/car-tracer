@@ -68,7 +68,8 @@ class Uploader(
                     val r = parse((outcome as HttpResult.Response).body)
                         ?: return UploadOutcome.Retry("unexpected response")
                     queue.remove(ready.rowIds.take(count))
-                    if (r.commands.isNotEmpty()) runCatching { onCommands(r.commands) }
+                    val commands = r.commands.filter { it.id.isNotBlank() }
+                    if (commands.isNotEmpty()) runCatching { onCommands(commands) }
                     return UploadOutcome.Sent(r.accepted, r.duplicates, r.rejected.size, r.rejected.firstOrNull()?.error?.take(200))
                 }
                 UploadOutcomeKind.DISCARD -> {

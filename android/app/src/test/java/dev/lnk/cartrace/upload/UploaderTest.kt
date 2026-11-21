@@ -86,6 +86,16 @@ class UploaderTest {
         assertTrue(got.isEmpty())
     }
 
+    @Test fun malformedCommandsDoNotBreakTheResponse() = runTest {
+        val got = mutableListOf<Command>()
+        uploader = Uploader(queue, settings, OkHttpClient(), "1.0-test", { db.queueDao().offsets().associate { it.bootCount to it.offsetMs } }, { 1 }, onCommands = { got += it })
+        fill(1)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"accepted":1,"duplicates":0,"rejected":[],"commands":[{"type":"read_dtc"},{"type":"read_dtc","id":5},{"type":"future"},{"type":"read_dtc","id":" "}]}"""))
+        assertEquals(UploadOutcome.Sent(1, 0, 0), uploader.uploadOnce())
+        assertEquals(0, queue.size())
+        assertTrue(got.isEmpty())
+    }
+
     @Test fun idleWithoutRequest() = runTest {
         assertEquals(UploadOutcome.Idle, uploader.uploadOnce())
         assertEquals(0, server.requestCount)
