@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS records (
 );
 CREATE INDEX IF NOT EXISTS records_type_ts ON records(type, ts);
 CREATE INDEX IF NOT EXISTS records_session ON records(session_id, seq);
+CREATE INDEX IF NOT EXISTS records_session_ts ON records(session_id, ts);
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
