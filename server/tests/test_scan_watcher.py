@@ -174,3 +174,75 @@ def test_run_watcher_retries_connect(tmp_path, monkeypatch):
     assert len(attempts) == 2
     assert seen == ["CONN"]
     assert sleeps == [scan_watcher.SCAN_POLL_S]
+
+
+# ---- clear_dtc ----
+
+def clear_scan(conn, now=NOW):
+    return scans.create_scan(conn, now, kind="clear_dtc")
+
+
+def test_clear_done_no_reading(conn):
+    sid = clear_scan(conn)
+    add_dtc(conn, "old", NOW - 1_000, ["P0401"])  # before the request: ignored
+    add_result(conn, sid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "✅ Averías borradas.")]
+    assert scans.open_scans(conn) == []
+
+
+def test_clear_done_reading_empty(conn):
+    sid = clear_scan(conn)
+    add_dtc(conn, "b", NOW + 4_000, [])
+    add_result(conn, sid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "✅ Averías borradas · ahora la centralita no tiene ninguna")]
+
+
+def test_clear_done_codes_remain(conn):
+    sid = clear_scan(conn)
+    add_dtc(conn, "b", NOW + 4_000, ["P0401"], ["P0409"])
+    add_result(conn, sid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "⚠️ Borradas, pero siguen apareciendo:\n"
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)\n"
+        "• P0409 · Circuito del sensor de la EGR")]
+
+
+@pytest.mark.parametrize("reason,text", [
+    ("engine_running", "🔑 Para borrar, pon el contacto con el motor apagado y vuelve a mandar /borrar_averias."),
+    ("obd_not_connected", "⚠️ La tablet no está conectada al ELM327 ahora mismo."),
+    ("rejected", "⚠️ La centralita no ha aceptado el borrado. Prueba con el motor apagado."),
+    ("obd_error", "⚠️ Se perdió la conexión con el ELM327 durante el borrado. Comprueba con /escanear si se borraron."),
+    ("weird", "⚠️ La centralita no ha aceptado el borrado. Prueba con el motor apagado."),
+])
+def test_clear_failed_reasons(conn, reason, text):
+    sid = clear_scan(conn)
+    add_result(conn, sid, NOW + 1_000, "dtc_clear_failed", " " + reason)
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 5_000, TZ)
+    assert c.sent == [(CHAT, text)]
+
+
+def test_clear_timeout(conn):
+    clear_scan(conn)
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 91_000, TZ)
+    assert c.sent == [(CHAT, "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato.")]
+
+
+def test_read_and_clear_each_get_own_text(conn):
+    rid = scans.create_scan(conn, NOW)
+    cid = clear_scan(conn)
+    add_dtc(conn, "b", NOW + 4_000, [])
+    add_result(conn, rid, NOW + 5_000, "dtc_scan")
+    add_result(conn, cid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    texts = sorted(t for _, t in c.sent)
+    assert len(texts) == 2
+    assert any(t.startswith("✅ Sin averías · leídas ahora ") for t in texts)
+    assert "✅ Averías borradas · ahora la centralita no tiene ninguna" in texts

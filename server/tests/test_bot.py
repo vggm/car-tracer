@@ -15,7 +15,8 @@ CHAT = 42
 START_TEXT_EXPECTED = (
     "Comandos:\n/donde · dónde está el coche\n/trayectos · últimos trayectos\n"
     "/estado · motor y batería\n/averias · averías guardadas\n"
-    "/escanear · leer averías ahora")
+    "/escanear · leer averías ahora\n"
+    "/borrar_averias · borrar averías de la centralita")
 NOW = 1_700_000_000_000
 
 
@@ -405,3 +406,180 @@ def test_escanear_moving_creates_scan(conn):
     run(msg("/escanear"), conn, c)
     assert c.calls == [("message", CHAT, "🔍 Leyendo averías… (tarda menos de un minuto)")]
     assert conn.execute("SELECT COUNT(*) FROM scan_requests").fetchone()[0] == 1
+
+
+# ---- /borrar_averias ----
+
+ENGINE_RUNNING = "🔑 Para borrar, pon el contacto con el motor apagado y vuelve a mandar /borrar_averias."
+CAR_OFF = "🅿️ El coche está apagado. Pon el contacto (sin arrancar) y manda /borrar_averias."
+NO_ELM = "⚠️ La tablet no está conectada al ELM327 ahora mismo."
+WARNING = "No arregla nada: si el fallo sigue, volverá a aparecer. También se reinician las pruebas de emisiones."
+CANCELLED = "Borrado cancelado."
+
+
+def add_obd(conn, ts, rpm):
+    conn.execute(
+        "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (f"o{ts}", "d", "s", 2, ts, "obd", json.dumps({"rpm": rpm, "speed_kmh": 0}), ts),
+    )
+
+
+def engine_off(conn):
+    add_gps(conn, NOW - 3_000)
+    add_obd(conn, NOW - 1_000, 0)
+
+
+def add_dtc_rec(conn, ts, active, pending=()):
+    conn.execute(
+        "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (f"d{ts}", "d", "s", 3, ts, "dtc",
+         json.dumps({"active": list(active), "pending": list(pending)}), ts),
+    )
+
+
+def clear_rows(conn):
+    return conn.execute("SELECT COUNT(*) FROM scan_requests WHERE kind='clear_dtc'").fetchone()[0]
+
+
+def confirm_id(c):
+    markup = [x for x in c.calls if x[0] == "markup"][0][1]
+    return markup["inline_keyboard"][0][0]["callback_data"].split(":", 1)[1]
+
+
+def test_borrar_parked_no_data(conn):
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)  # no_data
+    assert c.calls == [("message", CHAT, CAR_OFF)]
+    c = FakeClient()
+    add_gps(conn, NOW - 200_000)
+    run(msg("/borrar_averias"), conn, c)  # parked
+    assert c.calls == [("message", CHAT, CAR_OFF)]
+    assert conn.execute("SELECT COUNT(*) FROM clear_confirmations").fetchone()[0] == 0
+
+
+def test_borrar_engine_running(conn):
+    add_gps(conn, NOW - 3_000)
+    add_obd(conn, NOW - 1_000, 800)  # idle
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    assert c.calls == [("message", CHAT, ENGINE_RUNNING)]
+    assert conn.execute("SELECT COUNT(*) FROM clear_confirmations").fetchone()[0] == 0
+
+
+def test_borrar_moving(conn):
+    add_gps(conn, NOW - 5_000)
+    add_gps(conn, NOW - 2_000, lat=40.001)
+    add_obd(conn, NOW - 1_000, 2000)
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    assert c.calls == [("message", CHAT, ENGINE_RUNNING)]
+
+
+def test_borrar_stopped_no_elm(conn):
+    add_gps(conn, NOW - 1_000)
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    assert c.calls == [("message", CHAT, NO_ELM)]
+
+
+def test_borrar_confirmation_with_codes(conn):
+    engine_off(conn)
+    add_dtc_rec(conn, NOW - 50_000, ["P0401"], ["P0409", "P0401"])
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    cid = confirm_id(c)
+    assert c.calls[0] == ("message", CHAT,
+        "🗑️ Vas a borrar las averías guardadas en la centralita:\n"
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)\n"
+        "• P0409 · Circuito del sensor de la EGR\n\n" + WARNING)
+    assert c.calls[1] == ("markup", {"inline_keyboard": [[
+        {"text": "🗑️ Sí, borrar", "callback_data": f"clear:{cid}"},
+        {"text": "Cancelar", "callback_data": f"clearno:{cid}"}]]})
+
+
+@pytest.mark.parametrize("seed", [False, True])
+def test_borrar_confirmation_without_codes(conn, seed):
+    engine_off(conn)
+    if seed:
+        add_dtc_rec(conn, NOW - 50_000, [])
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    assert c.calls[0] == ("message", CHAT,
+        "🗑️ Vas a borrar las averías guardadas en la centralita "
+        "(la última lectura no tenía ninguna).\n\n" + WARNING)
+
+
+def test_borrar_confirm_creates_scan_once(conn):
+    engine_off(conn)
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    cid = confirm_id(c)
+    c2 = FakeClient()
+    run(cb(f"clear:{cid}"), conn, c2)
+    assert c2.calls == [("answer", "q1"), ("message", CHAT, "🗑️ Borrando…")]
+    assert clear_rows(conn) == 1
+    c3 = FakeClient()
+    run(cb(f"clear:{cid}", cid="q2"), conn, c3)
+    assert c3.calls == [("answer", "q2"), ("message", CHAT, CANCELLED)]
+    assert clear_rows(conn) == 1
+
+
+def test_borrar_confirm_expired(conn):
+    engine_off(conn)
+    from app.confirmations import CLEAR_CONFIRM_MS, create_confirmation
+    cid = create_confirmation(conn, NOW - CLEAR_CONFIRM_MS - 1)
+    c = FakeClient()
+    run(cb(f"clear:{cid}"), conn, c)
+    assert c.calls == [("answer", "q1"), ("message", CHAT, CANCELLED)]
+    assert clear_rows(conn) == 0
+
+
+def test_borrar_confirm_unknown_id(conn):
+    engine_off(conn)
+    c = FakeClient()
+    run(cb("clear:nope"), conn, c)
+    assert c.calls == [("answer", "q1"), ("message", CHAT, CANCELLED)]
+
+
+def test_borrar_cancel(conn):
+    engine_off(conn)
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    cid = confirm_id(c)
+    c2 = FakeClient()
+    run(cb(f"clearno:{cid}"), conn, c2)
+    assert c2.calls == [("answer", "q1"), ("message", CHAT, CANCELLED)]
+    c3 = FakeClient()
+    run(cb(f"clear:{cid}", cid="q2"), conn, c3)
+    assert c3.calls == [("answer", "q2"), ("message", CHAT, CANCELLED)]
+    assert clear_rows(conn) == 0
+
+
+def test_borrar_engine_started_between(conn):
+    engine_off(conn)
+    c = FakeClient()
+    run(msg("/borrar_averias"), conn, c)
+    cid = confirm_id(c)
+    add_obd(conn, NOW - 500, 900)
+    c2 = FakeClient()
+    run(cb(f"clear:{cid}"), conn, c2)
+    assert c2.calls == [("answer", "q1"), ("message", CHAT, ENGINE_RUNNING)]
+    assert clear_rows(conn) == 0
+
+
+def test_borrar_other_chat_ignored(conn):
+    engine_off(conn)
+    c = FakeClient()
+    run(msg("/borrar_averias", chat=99), conn, c)
+    assert c.calls == []
+    from app.confirmations import create_confirmation
+    cid = create_confirmation(conn, NOW)
+    run(cb(f"clear:{cid}", chat=99), conn, c)
+    assert c.calls == [] and clear_rows(conn) == 0
+
+
+def test_set_my_commands_includes_borrar():
+    import inspect
+    assert '("borrar_averias", "Borrar averías de la centralita")' in inspect.getsource(botmain.main)
