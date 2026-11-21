@@ -12,6 +12,9 @@ from app.bot.telegram import TelegramClient
 from app.db import connect
 
 CHAT = 42
+START_TEXT_EXPECTED = (
+    "Comandos:\n/donde · dónde está el coche\n/trayectos · últimos trayectos\n"
+    "/estado · motor y batería\n/averias · averías guardadas")
 NOW = 1_700_000_000_000
 
 
@@ -19,8 +22,16 @@ class FakeClient:
     def __init__(self):
         self.calls = []
 
-    def send_message(self, chat_id, text):
+    def send_message(self, chat_id, text, reply_markup=None):
         self.calls.append(("message", chat_id, text))
+        if reply_markup is not None:
+            self.calls.append(("markup", reply_markup))
+
+    def answer_callback_query(self, callback_query_id):
+        self.calls.append(("answer", callback_query_id))
+
+    def send_document(self, chat_id, filename, content):
+        self.calls.append(("document", chat_id, filename, content))
 
     def send_location(self, chat_id, lat, lon):
         self.calls.append(("location", chat_id, lat, lon))
@@ -76,7 +87,7 @@ def test_other_chat_is_ignored(conn):
 
 @pytest.mark.parametrize("update", [
     {"update_id": 1, "edited_message": {"text": "/donde", "chat": {"id": CHAT}}},
-    {"update_id": 1, "callback_query": {"id": "x", "data": "/donde"}},
+    {"update_id": 1, "callback_query": "garbage"},
     {"update_id": 1, "message": {"photo": [{}], "chat": {"id": CHAT}}},
     {"update_id": 1, "message": {"text": "/donde"}},
     {"update_id": 1, "message": {"text": "hola", "chat": {"id": CHAT}}},
@@ -92,7 +103,7 @@ def test_non_text_updates_are_ignored(conn, update):
 def test_start_lists_commands(conn):
     c = FakeClient()
     run(msg("/start"), conn, c)
-    assert c.calls == [("message", CHAT, "Comandos:\n/donde · dónde está el coche")]
+    assert c.calls == [("message", CHAT, START_TEXT_EXPECTED)]
 
 
 def test_client_builds_urls():
@@ -217,3 +228,136 @@ def test_transport_error_is_wrapped_without_token():
         c.send_message(CHAT, "hi")
     assert marker not in str(ei.value)
     assert ei.value.__cause__ is None and ei.value.__suppress_context__
+
+
+# ---- trips, estado, averias ----
+
+def cb(data, chat=CHAT, cid="q1"):
+    return {"update_id": 1, "callback_query": {
+        "id": cid, "data": data, "message": {"chat": {"id": chat}}}}
+
+
+def drive(conn, start_ts, seconds=300, session="s1", north0=0.0):
+    for i in range(0, seconds + 1, 10):
+        ts = start_ts + i * 1000
+        conn.execute(
+            "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (f"{session}-{ts}", "d", session, i, ts, "gps",
+             json.dumps({"lat": 40.0 + (north0 + i * 10) / 111_195.0, "lon": -3.0,
+                         "acc_m": 5.0, "speed_mps": 10.0}), ts))
+
+
+def test_trayectos_sends_list_and_keyboard(conn):
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    assert c.calls[0][0] == "message" and "Últimos trayectos" in c.calls[0][2]
+    assert c.calls[1][0] == "markup"
+    assert c.calls[1][1]["inline_keyboard"][0][0]["callback_data"].startswith("trip:")
+
+
+def test_trayectos_empty(conn):
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    assert c.calls == [("message", CHAT, "Todavía no hay trayectos.")]
+
+
+def test_callback_trip_answers_detail_and_gpx(conn):
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+    c2 = FakeClient()
+    run(cb(data), conn, c2)
+    assert c2.calls[0] == ("answer", "q1")
+    assert c2.calls[1][0] == "message" and "Trayecto del" in c2.calls[1][2]
+    kind, chat, name, content = c2.calls[2]
+    assert kind == "document" and chat == CHAT
+    assert name.startswith("trayecto-") and name.endswith(".gpx")
+    assert content.startswith(b"<?xml")
+
+
+def test_callback_unknown_trip(conn):
+    c = FakeClient()
+    run(cb("trip:nope:123"), conn, c)
+    assert c.calls == [("answer", "q1"),
+                       ("message", CHAT, "Ese trayecto ya no está disponible.")]
+
+
+@pytest.mark.parametrize("data", ["trip:", "trip:garbage", "xyz", "trips:abc", "trips:", None, 5])
+def test_callback_malformed_only_answers(conn, data):
+    c = FakeClient()
+    run(cb(data), conn, c)
+    assert c.calls == [("answer", "q1")]
+
+
+def test_callback_trips_nothing_older(conn):
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(cb("trips:1"), conn, c)
+    assert c.calls == [("answer", "q1"), ("message", CHAT, "No hay trayectos anteriores.")]
+
+
+def test_callback_trips_older_page(conn):
+    drive(conn, NOW - 7_200_000, session="a")
+    drive(conn, NOW - 3_600_000, session="b")
+    c = FakeClient()
+    run(cb(f"trips:{NOW - 3_600_000}"), conn, c)
+    assert c.calls[0] == ("answer", "q1")
+    assert c.calls[1][0] == "message" and "Últimos trayectos" in c.calls[1][2]
+
+
+def test_callback_other_chat_ignored(conn):
+    c = FakeClient()
+    run(cb("trip:s1:1", chat=999), conn, c)
+    assert c.calls == []
+
+
+def test_callback_without_message_ignored(conn):
+    c = FakeClient()
+    run({"update_id": 1, "callback_query": {"id": "x", "data": "trip:a:1"}}, conn, c)
+    assert c.calls == []
+
+
+def test_estado_and_averias_route_to_formatters(conn):
+    from app.dtc import format_averias
+    from app.vehicle import format_estado
+    c = FakeClient()
+    run(msg("/estado"), conn, c)
+    run(msg("/averias"), conn, c)
+    assert c.calls == [
+        ("message", CHAT, format_estado(conn, NOW, "Europe/Madrid")),
+        ("message", CHAT, format_averias(conn, NOW, "Europe/Madrid"))]
+
+
+def test_client_new_methods():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    client = TelegramClient("TEST:FAKE", httpx.Client(transport=httpx.MockTransport(handler)))
+    kb = {"inline_keyboard": [[{"text": "1", "callback_data": "trip:a:1"}]]}
+    client.send_message(CHAT, "hi", reply_markup=kb)
+    client.answer_callback_query("q9")
+    client.send_document(CHAT, "trayecto-x.gpx", b"<gpx/>")
+    assert [r.url.path for r in seen] == [
+        "/botTEST:FAKE/sendMessage", "/botTEST:FAKE/answerCallbackQuery",
+        "/botTEST:FAKE/sendDocument"]
+    assert json.loads(seen[0].content) == {"chat_id": CHAT, "text": "hi", "reply_markup": kb}
+    assert json.loads(seen[1].content) == {"callback_query_id": "q9"}
+    body = seen[2].content
+    assert seen[2].headers["content-type"].startswith("multipart/form-data")
+    assert b'name="chat_id"' in body and b'name="document"' in body
+    assert b'filename="trayecto-x.gpx"' in body and b"<gpx/>" in body
+
+
+def test_send_document_error_hides_token():
+    marker = "TEST:FAKE-MARKER"
+    t = httpx.MockTransport(lambda r: httpx.Response(500))
+    c = TelegramClient(marker, httpx.Client(transport=t))
+    with pytest.raises(botmain.TelegramError) as ei:
+        c.send_document(CHAT, "a.gpx", b"x")
+    assert marker not in str(ei.value)
