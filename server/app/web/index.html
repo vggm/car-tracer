@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#111315" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<title>car-trace</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%23f5a524'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/vendor/uplot/uPlot.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<script defer src="/static/vendor/leaflet/leaflet.js"></script>
+<script defer src="/static/vendor/uplot/uPlot.iife.min.js"></script>
+<script type="module" src="/static/js/main.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/resumen"><span class="brand-dot" aria-hidden="true"></span>car-trace</a>
+  <nav class="nav" aria-label="Principal">
+    <a href="#/resumen" data-nav="resumen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10m5.3 9V5m5.4 14v-7M20 19V8"/></svg>
+      <span>Resumen</span>
+    </a>
+    <a href="#/trayectos" data-nav="trayectos">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8.2 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.8"/></svg>
+      <span>Trayectos</span>
+    </a>
+    <a href="#/averias" data-nav="averias">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h3l1.5-2h5L16 8h3v9h-3M5 8v9h3M9 13h6M12 8v5"/><path d="M8 17h8"/></svg>
+      <span>Averías</span>
+    </a>
+    <a href="#/avisos" data-nav="avisos">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17v-6a6 6 0 1 1 12 0v6l1.5 2h-15zM10 21h4"/></svg>
+      <span>Avisos</span><b class="badge" id="alerts-badge" hidden></b>
+    </a>
+  </nav>
+</header>
+<main id="main" tabindex="-1"></main>
+<noscript><p style="padding:16px">car-trace necesita JavaScript.</p></noscript>
+</body>
+</html>
