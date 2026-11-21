@@ -204,11 +204,11 @@ class TelemetryService : Service() {
 
     /** No ObdSource (simulated mode without OBD, adapter not configured): answer the request as a failure. */
     private suspend fun failDtcScan(id: String) {
-        if (!handledNoObd.add(id)) return
+        if (!handledScans.add(id)) return
         emitEvent(session.get(), Events.DTC_SCAN_FAILED, "$id obd_not_connected")
     }
 
-    private val handledNoObd: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val handledScans: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private suspend fun restartSources(snap: SettingsSnapshot) {
         val s = scope ?: return
@@ -246,6 +246,7 @@ class TelemetryService : Service() {
                 protocolStore = graph.protocolStore,
                 adapterAddress = snap.adapterAddress,
                 protocolPreference = snap.obdProtocol,
+                handledScans = handledScans,
             )
             currentObd = obd
             coroutineScope {

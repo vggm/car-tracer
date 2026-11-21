@@ -40,13 +40,13 @@ class ObdSource(
     private val protocolStore: ProtocolStore = NoProtocolStore,
     private val adapterAddress: String = "",
     private val protocolPreference: String = "0",
+    /** Scan ids already answered; the service shares one set across ObdSource instances. */
+    private val handledScans: MutableSet<String> = ConcurrentHashMap.newKeySet(),
 ) {
     private val _state = MutableStateFlow<ObdState>(ObdState.Connecting)
     val state: StateFlow<ObdState> = _state
 
     private val pendingScans = ConcurrentLinkedQueue<String>()
-    private val handledScans: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
     /**
      * Server asked for a DTC read. Thread-safe; ids already handled are ignored. While Connected the scan
      * runs between poll cycles, otherwise `dtc_scan_failed` is emitted right away.
@@ -67,7 +67,14 @@ class ObdSource(
     private suspend fun runPendingScans(t: ElmTransport) {
         while (true) {
             val id = pendingScans.poll() ?: return
-            readDtcs(t)
+            try {
+                readDtcs(t)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                send(Events.DTC_SCAN_FAILED, "$id obd_error")
+                throw e
+            }
             send(Events.DTC_SCAN, id)
         }
     }
