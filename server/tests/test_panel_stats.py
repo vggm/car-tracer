@@ -112,9 +112,15 @@ def test_days_series_window_and_only_used_days():
 
 def test_days_series_across_dst_change():
     # DST ends 2026-10-25 in Madrid
-    trips = [make_trip(utc(2026, 10, d, 9)) for d in (24, 25, 26)]
+    # local date differs from the UTC date on both sides of the change:
+    # 22:30Z on the 24th is 00:30 CEST on the 25th; 23:30Z on the 25th is 00:30 CET on the 26th
+    trips = [
+        make_trip(utc(2026, 10, 24, 22, 30)),
+        make_trip(utc(2026, 10, 25, 23, 30)),
+        make_trip(utc(2026, 10, 27, 10, 0)),
+    ]
     s = stats.days_series(trips, 2026, 10, TZ)
-    assert [d["date"] for d in s] == ["2026-10-24", "2026-10-25", "2026-10-26"]
+    assert [d["date"] for d in s] == ["2026-10-25", "2026-10-26", "2026-10-27"]
 
 
 def test_totals_and_rounding():
@@ -134,12 +140,17 @@ def test_trip_summary():
 def test_trip_detail_series_prefers_obd(tmp_path):
     conn = _conn(tmp_path)
     drive(conn, 0, 100)
+    obd(conn, 55_000, rpm=1500.4, speed_kmh=36.04, coolant_c=87.6)
     (trip,), _ = list_trips(conn)
     d = stats.trip_detail(conn, trip)
+    i = d["series"]["ts"].index(55_000)
+    assert d["series"]["speed_kmh"][i] == 36.0
+    assert d["series"]["rpm"][i] == 1500 and isinstance(d["series"]["rpm"][i], int)
+    assert d["series"]["coolant_c"][i] == 88
     assert d["id"] == trip.id and d["idle_ms"] == trip.idle_ms
     assert len(d["points"]) > 0 and len(d["points"][0]) == 3
     assert d["series"]["rpm"] and None not in d["series"]["rpm"]
-    assert d["series"]["coolant_c"] == [None] * len(d["series"]["ts"])
+    assert d["series"]["coolant_c"].count(None) == len(d["series"]["ts"]) - 1
     assert d["rpm_avg"] == 1500
 
 

@@ -43,6 +43,10 @@ def _round(x: float | None) -> int | None:
     return None if x is None else round(x)
 
 
+def _round1(x: float | None) -> float | None:
+    return None if x is None else round(x, 1)
+
+
 def trips_in_month(trips: list[Trip], year: int, month: int, tz: str) -> list[Trip]:
     key = f"{year:04d}-{month:02d}"
     return [t for t in trips if month_key(t.start_ts, tz) == key]
@@ -122,9 +126,9 @@ def _series(conn: sqlite3.Connection, trip: Trip) -> dict:
     if any(v.get("speed_kmh") is not None for _, v in rows):
         return {
             "ts": [ts for ts, _ in rows],
-            "speed_kmh": [v.get("speed_kmh") for _, v in rows],
-            "rpm": [v.get("rpm") for _, v in rows],
-            "coolant_c": [v.get("coolant_c") for _, v in rows],
+            "speed_kmh": [_round1(v.get("speed_kmh")) for _, v in rows],
+            "rpm": [_round(v.get("rpm")) for _, v in rows],
+            "coolant_c": [_round(v.get("coolant_c")) for _, v in rows],
         }
     return {
         "ts": [p.ts for p in trip.points],
