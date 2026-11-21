@@ -49,3 +49,11 @@ def test_gpx_filename_uses_local_time():
 def test_gpx_empty_raises():
     with pytest.raises(ValueError):
         to_gpx([], ms(2025, 11, 18, 16, 0), TZ)
+
+
+def test_gpx_coordinates_use_fixed_decimals():
+    start = ms(2025, 11, 18, 16, 0, 0)
+    _, data = to_gpx([P(start, 40.0, 0.00001)], start, TZ)
+    pt = ET.fromstring(data).find(f".//{GPX_NS}trkpt")
+    assert pt.get("lon") == "0.0000100"
+    assert pt.get("lat") == "40.0000000"

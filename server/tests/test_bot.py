@@ -361,3 +361,21 @@ def test_send_document_error_hides_token():
     with pytest.raises(botmain.TelegramError) as ei:
         c.send_document(CHAT, "a.gpx", b"x")
     assert marker not in str(ei.value)
+
+
+def test_callback_still_handled_when_answer_fails(conn, caplog):
+    from app.bot.telegram import TelegramError
+
+    class FailingAnswer(FakeClient):
+        def answer_callback_query(self, callback_query_id):
+            raise TelegramError("answerCallbackQuery: HTTP 400")
+
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+    c2 = FailingAnswer()
+    run(cb(data), conn, c2)
+    assert c2.calls[0][0] == "message" and "Trayecto del" in c2.calls[0][2]
+    assert c2.calls[1][0] == "document"
+    assert "HTTP 400" not in caplog.text

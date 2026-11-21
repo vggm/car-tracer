@@ -29,7 +29,7 @@ def to_gpx(points: list[GpsPoint], start_ts: int, tz: str) -> tuple[str, bytes]:
     ET.SubElement(trk, _q("name")).text = name
     seg = ET.SubElement(trk, _q("trkseg"))
     for p in points:
-        trkpt = ET.SubElement(seg, _q("trkpt"), {"lat": str(p.lat), "lon": str(p.lon)})
+        trkpt = ET.SubElement(seg, _q("trkpt"), {"lat": f"{p.lat:.7f}", "lon": f"{p.lon:.7f}"})
         t = datetime.fromtimestamp(p.ts / 1000, UTC)
         ET.SubElement(trkpt, _q("time")).text = t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
