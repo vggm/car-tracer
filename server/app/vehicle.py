@@ -6,10 +6,14 @@ from app import fmt
 from app.dtc import latest_dtc
 from app.location import ENGINE_ON_VOLTAGE
 
+MAX_OBD_SCAN = 2000
+
 
 def _latest_values(conn: sqlite3.Connection, keys: tuple[str, ...]) -> tuple[int, dict] | None:
     for ts, data in conn.execute(
-        "SELECT ts, data FROM records WHERE type='obd' ORDER BY ts DESC"
+        "SELECT ts, data FROM records WHERE type='obd'"
+        " ORDER BY ts DESC, rowid DESC LIMIT ?",
+        (MAX_OBD_SCAN,),
     ):
         values = json.loads(data).get("values") or {}
         if any(values.get(k) is not None for k in keys):

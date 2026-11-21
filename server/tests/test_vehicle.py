@@ -77,3 +77,10 @@ def test_dtc_lines(tmp_path):
 
 def test_no_engine_data(tmp_path):
     assert format_estado(_conn(tmp_path), NOW, TZ) == "Todavía no hay datos del motor."
+
+
+def test_estado_same_ts_most_recent_insert_wins(tmp_path):
+    conn = _conn(tmp_path)
+    obd(conn, T, voltage_v=11.0)
+    obd(conn, T, voltage_v=14.2)
+    assert "14,2 V" in format_estado(conn, NOW, TZ)
