@@ -37,6 +37,10 @@ def _records(conn: sqlite3.Connection, type_: str, since: int):
         yield session_id, ts, json.loads(data)
 
 
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
 def _trip_id(trips: list[Trip], session_id: str, ts: int) -> str | None:
     for t in trips:
         if t.session_id == session_id and t.start_ts <= ts <= t.end_ts:
@@ -78,7 +82,7 @@ def _overheat(trips, since, tz) -> list[Alert]:
         Alert(
             f"overheat:{t.session_id}:{t.start_ts}", "overheat", "high", t.start_ts,
             f"Motor caliente: {fmt.num(t.coolant_max)} °C",
-            f"Trayecto del {fmt.full_day(t.start_ts, tz)} a las {fmt.hhmm(t.start_ts, tz)}",
+            f"Trayecto del {_lower_first(fmt.full_day(t.start_ts, tz))} a las {fmt.hhmm(t.start_ts, tz)}",
             t.id,
         )
         for t in trips
@@ -91,7 +95,7 @@ def _no_obd(trips, since, tz) -> list[Alert]:
         Alert(
             f"no_obd:{t.session_id}:{t.start_ts}", "no_obd", "info", t.start_ts,
             "Trayecto sin datos del motor",
-            f"{fmt.num(t.distance_m / 1000, 1)} km · {fmt.full_day(t.start_ts, tz)}"
+            f"{fmt.num(t.distance_m / 1000, 1)} km · {_lower_first(fmt.full_day(t.start_ts, tz))}"
             f" a las {fmt.hhmm(t.start_ts, tz)}",
             t.id,
         )

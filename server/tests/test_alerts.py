@@ -100,7 +100,7 @@ def test_overheat_threshold_inclusive(tmp_path):
     assert a.title == "Motor caliente: 105 °C"
     assert a.severity == "high"
     assert a.ts == NOW - 3_600_000
-    assert a.detail == "Trayecto del Sábado 11 de abril a las 00:00"
+    assert a.detail == "Trayecto del sábado 11 de abril a las 00:00"
 
 
 def test_overheat_just_below_threshold(tmp_path):
@@ -157,7 +157,7 @@ def test_no_obd_trip_alert_links_trip(tmp_path):
     assert a.trip_id == trip.id
     assert a.severity == "info"
     assert a.title == "Trayecto sin datos del motor"
-    assert a.detail == "3,0 km · Sábado 11 de abril a las 00:00"
+    assert a.detail == "3,0 km · sábado 11 de abril a las 00:00"
 
 
 def test_stale_after_three_days(tmp_path):
