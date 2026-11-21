@@ -169,13 +169,17 @@ class ObdSourceTest {
         }
         val job = launch { src.run() }
         advanceTimeBy(500)
-        assertEquals(listOf(Events.OBD_CONNECTED, Events.OBD_LOST), events().map { it.event })
+        assertEquals(
+            listOf(Events.OBD_CONNECTED, Events.OBD_LOST),
+            events().map { it.event }.filter { it != Events.OBD_ATTEMPT_FAILED },
+        )
         val first = src.state.value as ObdState.Retrying
         assertEquals(5_000L, first.nextInMs)
         advanceTimeBy(5_100)
         assertEquals(10_000L, (src.state.value as ObdState.Retrying).nextInMs)
         // never connected again: no extra obd_lost
-        assertEquals(2, events().size)
+        assertEquals(1, events().count { it.event == Events.OBD_LOST })
+        assertEquals(2, events().count { it.event != Events.OBD_ATTEMPT_FAILED })
         job.cancel()
     }
 
@@ -188,7 +192,7 @@ class ObdSourceTest {
         assertTrue(st.error.contains("not paired"))
         assertEquals(5_000L, st.nextInMs)
         assertTrue(job.isActive)
-        assertTrue(events().isEmpty())
+        assertEquals(listOf(Events.OBD_ATTEMPT_FAILED), events().map { it.event })
         job.cancel()
     }
 
