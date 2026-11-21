@@ -48,6 +48,11 @@ def when(ts_ms: int, now_ms: int, tz: str) -> str:
     return f"{label[0].lower()}{label[1:]} {hhmm(ts_ms, tz)}"
 
 
-def long_day(ts_ms: int, tz: str) -> str:
+FULL_WEEKDAYS = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+FULL_MONTHS = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+               "septiembre", "octubre", "noviembre", "diciembre")
+
+
+def full_day(ts_ms: int, tz: str) -> str:
     d = _local(ts_ms, tz)
-    return f"{WEEKDAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}"
+    return f"{FULL_WEEKDAYS[d.weekday()]} {d.day} de {FULL_MONTHS[d.month - 1]}"

@@ -38,8 +38,11 @@ class TelegramClient:
             payload["offset"] = offset
         return self._call("getUpdates", payload) or []
 
-    def send_message(self, chat_id, text, reply_markup: dict | None = None):
+    def send_message(self, chat_id, text, reply_markup: dict | None = None,
+                     parse_mode: str | None = None):
         payload: dict = {"chat_id": chat_id, "text": text}
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         self._call("sendMessage", payload)
