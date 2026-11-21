@@ -56,7 +56,7 @@ def _process(conn, scan_id, requested_at, now_ms, tz):
 
 
 def check_scans(conn, client, chat_id: int, now_ms: int, tz: str) -> None:
-    for scan_id, requested_at in scans.open_scans(conn):
+    for scan_id, requested_at, _kind in scans.open_scans(conn):
         try:
             outcome = _process(conn, scan_id, requested_at, now_ms, tz)
         except Exception as e:

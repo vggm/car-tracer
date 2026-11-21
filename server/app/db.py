@@ -23,8 +23,34 @@ CREATE TABLE IF NOT EXISTS scan_requests (
   done_at      INTEGER,
   result       TEXT
 );
+CREATE TABLE IF NOT EXISTS clear_confirmations (
+  id         TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  used_at    INTEGER
+);
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
+
+
+SCHEMA_VERSION = 2
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(scan_requests)")]
+    if "kind" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE scan_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'read_dtc'"
+            )
+        except sqlite3.OperationalError:
+            # another process (api / bot) added it first
+            if "kind" not in [r[1] for r in conn.execute("PRAGMA table_info(scan_requests)")]:
+                raise
+    if conn.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
+        conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+    else:
+        conn.execute("UPDATE schema_version SET version = ? WHERE version < ?",
+                     (SCHEMA_VERSION, SCHEMA_VERSION))
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -32,8 +58,7 @@ def connect(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    if conn.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
-        conn.execute("INSERT INTO schema_version(version) VALUES (1)")
+    _migrate(conn)
     return conn
 
 
