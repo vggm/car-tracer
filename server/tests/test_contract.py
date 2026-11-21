@@ -66,6 +66,8 @@ def test_batch_rejects_bad_device_id():
 @pytest.mark.parametrize("event,detail", [
     ("dtc_scan", "abc"),
     ("dtc_scan_failed", "abc obd_not_connected"),
+    ("dtc_clear", "abc"),
+    ("dtc_clear_failed", "abc rejected"),
 ])
 def test_scan_events_accepted(event, detail):
     parse_record(base(type="event", event=event, detail=detail), NOW)
