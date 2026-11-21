@@ -2,7 +2,8 @@ import json
 import uuid
 
 from app import db
-from app.trips import get_trip, list_trips
+from app.location import GpsPoint
+from app.trips import get_trip, list_trips, valid_points
 
 M_PER_DEG = 111_195.0  # metres per degree of latitude
 _n = [0]
@@ -192,3 +193,65 @@ def test_trip_id_fits_callback_data(tmp_path):
     drive(conn, 1_760_000_000_000, 100, session=sid)
     (trip,), _ = list_trips(conn)
     assert len(("trip:" + trip.id).encode()) <= 64
+
+
+def P(ts, north_m=0.0, acc=5.0, lat=None, lon=None):
+    return GpsPoint(
+        ts=ts,
+        lat=40.0 + north_m / M_PER_DEG if lat is None else lat,
+        lon=-3.0 if lon is None else lon,
+        acc_m=acc,
+        speed_mps=None,
+    )
+
+
+def test_valid_points_drops_low_accuracy_and_zero_zero():
+    pts = [P(0), P(1000, acc=80.0), P(2000, lat=0.0, lon=0.0), P(3000, north_m=10)]
+    assert [p.ts for p in valid_points(pts)] == [0, 3000]
+
+
+def test_valid_points_drops_jump_and_keeps_next_plausible():
+    # 5 km in 10 s is a jump; the next point is near the last accepted one
+    pts = [P(0), P(10_000, north_m=5000), P(20_000, north_m=100)]
+    assert [p.ts for p in valid_points(pts)] == [0, 20_000]
+
+
+def test_valid_points_same_timestamp():
+    pts = [P(0), P(0, north_m=0.5), P(0, north_m=50), P(1000, north_m=10)]
+    # same ts: kept only if closer than 1 m to the last accepted point
+    assert [(p.ts, round(p.lat, 6)) for p in valid_points(pts)] == [
+        (0, round(40.0, 6)),
+        (0, round(40.0 + 0.5 / M_PER_DEG, 6)),
+        (1000, round(40.0 + 10 / M_PER_DEG, 6)),
+    ]
+    assert valid_points([]) == []
+
+
+def test_gap_of_exactly_120s_joins(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 100)
+    drive(conn, 220_000, 100, north0=1000)  # last record at 100_000 -> exactly 120 s
+    trips, _ = list_trips(conn)
+    assert len(trips) == 1 and trips[0].end_ts == 320_000
+    drive(conn, 1_000_000, 100, session="s2")
+    drive(conn, 1_220_001, 100, session="s2", north0=1000)  # 120_001 ms: splits
+    trips, _ = list_trips(conn)
+    assert len(trips) == 3
+
+
+def test_pagination_boundary_inside_session(tmp_path):
+    conn = _conn(tmp_path)
+    starts = []
+    for k in range(3):  # one session with three trips
+        s = k * 1_000_000
+        drive(conn, s, 100)
+        starts.append(s)
+    drive(conn, 5_000_000, 100, session="s2")
+    drive(conn, 6_000_000, 100, session="s3")
+    starts += [5_000_000, 6_000_000]
+    page1, more1 = list_trips(conn, limit=2)
+    assert [t.start_ts for t in page1] == [6_000_000, 5_000_000] and more1
+    page2, more2 = list_trips(conn, before_ts=page1[-1].start_ts, limit=2)
+    assert [t.start_ts for t in page2] == [2_000_000, 1_000_000] and more2
+    page3, more3 = list_trips(conn, before_ts=page2[-1].start_ts, limit=2)
+    assert [t.start_ts for t in page3] == [0] and not more3
