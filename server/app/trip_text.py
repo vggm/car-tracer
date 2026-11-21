@@ -1,8 +1,13 @@
 """Spanish texts and keyboards for the trip commands."""
 import html
+from urllib.parse import urlencode
 
 from app import fmt
+from app.location import GpsPoint, _haversine_m
 from app.trips import Trip
+
+MAPS_WAYPOINTS = 8
+MAPS_BUTTON_TEXT = "🗺️ Ver en Google Maps"
 
 
 def _minutes(ms: int) -> int:
@@ -40,6 +45,48 @@ def trip_list_keyboard(trips: list[Trip], has_more: bool) -> dict | None:
             [{"text": "⬅️ Anteriores", "callback_data": f"trips:{trips[-1].start_ts}"}]
         )
     return {"inline_keyboard": rows}
+
+
+def _coord(p: GpsPoint) -> str:
+    return f"{p.lat:.5f},{p.lon:.5f}"
+
+
+def maps_url(points: list[GpsPoint]) -> str | None:
+    """Google Maps directions URL approximating the route, or None without a route."""
+    if len(points) < 2:
+        return None
+    cum = [0.0]
+    for prev, cur in zip(points, points[1:]):
+        cum.append(cum[-1] + _haversine_m(prev, cur))
+    total = cum[-1]
+    if total <= 0:
+        return None
+    origin, destination = _coord(points[0]), _coord(points[-1])
+    seen = {origin, destination}
+    waypoints: list[str] = []
+    idx = 0
+    for k in range(1, MAPS_WAYPOINTS + 1):
+        target = total * k / (MAPS_WAYPOINTS + 1)
+        while idx < len(points) - 1 and cum[idx] < target:
+            idx += 1
+        # pick the nearer of the two points around the target distance
+        best = idx if idx == 0 or cum[idx] - target <= target - cum[idx - 1] else idx - 1
+        c = _coord(points[best])
+        if c not in seen:
+            seen.add(c)
+            waypoints.append(c)
+    params = [("api", "1"), ("origin", origin), ("destination", destination),
+              ("travelmode", "driving")]
+    if waypoints:
+        params.append(("waypoints", "|".join(waypoints)))
+    return "https://www.google.com/maps/dir/?" + urlencode(params)
+
+
+def trip_detail_keyboard(points: list[GpsPoint]) -> dict | None:
+    url = maps_url(points)
+    if url is None:
+        return None
+    return {"inline_keyboard": [[{"text": MAPS_BUTTON_TEXT, "url": url}]]}
 
 
 def format_trip_detail(trip: Trip, tz: str, has_route: bool) -> str:

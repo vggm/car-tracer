@@ -5,11 +5,12 @@ import httpx
 
 from app.confirmations import consume_confirmation, create_confirmation
 from app.dtc import format_averias, format_codes, latest_dtc
-from app.gpx import to_gpx
 from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
 from app.scans import create_scan
-from app.trip_text import format_trip_detail, format_trip_list, trip_list_keyboard
+from app.trip_text import (
+    format_trip_detail, format_trip_list, maps_url, trip_detail_keyboard, trip_list_keyboard,
+)
 from app.trips import get_trip, list_trips
 from app.vehicle import format_estado
 
@@ -67,11 +68,9 @@ def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
     if trip is None:
         client.send_message(chat_id, "Ese trayecto ya no está disponible.")
         return
-    client.send_message(chat_id, format_trip_detail(trip, tz, bool(trip.points)),
-                        parse_mode="HTML")
-    if trip.points:
-        filename, content = to_gpx(trip.points, trip.start_ts, tz)
-        client.send_document(chat_id, filename, content)
+    client.send_message(chat_id,
+                        format_trip_detail(trip, tz, maps_url(trip.points) is not None),
+                        reply_markup=trip_detail_keyboard(trip.points), parse_mode="HTML")
 
 
 def _clear_gate(conn, now_ms) -> str | None:
