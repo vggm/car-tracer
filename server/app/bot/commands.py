@@ -1,10 +1,17 @@
 """Command handling for the car's Telegram bot."""
+import logging
+
+import httpx
+
 from app.dtc import format_averias
 from app.gpx import to_gpx
+from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
 from app.trip_text import format_trip_detail, format_trip_list, trip_list_keyboard
 from app.trips import get_trip, list_trips
 from app.vehicle import format_estado
+
+log = logging.getLogger(__name__)
 
 START_TEXT = (
     "Comandos:\n"
@@ -51,7 +58,11 @@ def _handle_callback(query: dict, *, chat_id, client, conn, now_ms, tz) -> None:
     query_id = query.get("id")
     if not isinstance(query_id, str):
         return
-    client.answer_callback_query(query_id)
+    try:
+        client.answer_callback_query(query_id)
+    except (TelegramError, httpx.HTTPError) as e:
+        # type name only: the message or URL may carry the bot credential
+        log.warning("answer_callback_query failed: %s", type(e).__name__)
     data = query.get("data")
     if not isinstance(data, str):
         return
