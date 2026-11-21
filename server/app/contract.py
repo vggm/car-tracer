@@ -80,7 +80,7 @@ class DtcRecord(_Base):
 class EventRecord(_Base):
     type: Literal["event"]
     event: Literal["session_start", "resumed", "obd_connected", "obd_lost", "obd_error",
-                   "dtc_scan", "dtc_scan_failed", "dtc_clear", "dtc_clear_failed"]
+                   "dtc_scan", "dtc_scan_failed", "dtc_clear", "dtc_clear_failed", "obd_attempt_failed"]
     detail: str | None = Field(default=None, max_length=200)
 
 
