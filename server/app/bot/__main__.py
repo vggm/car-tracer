@@ -1,11 +1,13 @@
 """Entry point: python -m app.bot (long polling loop)."""
 import logging
 import sys
+import threading
 import time
 
 import httpx
 
 from app.bot.commands import handle_update
+from app.bot.scan_watcher import run_watcher
 from app.bot.telegram import TelegramClient, TelegramError
 from app.config import Settings
 from app.db import connect
@@ -63,6 +65,7 @@ def main() -> int:
             ("trayectos", "Últimos trayectos"),
             ("estado", "Motor y batería"),
             ("averias", "Averías guardadas"),
+            ("escanear", "Leer averías ahora"),
         ])
     except (httpx.HTTPError, TelegramError) as e:
         log.warning("setMyCommands failed (%s)", type(e).__name__)
@@ -71,6 +74,8 @@ def main() -> int:
         handle_update(update, chat_id=settings.chat_id, client=client, conn=conn,
                       now_ms=int(time.time() * 1000), tz=settings.tz)
 
+    threading.Thread(target=run_watcher, daemon=True, name="scan-watcher",
+                     args=(settings.db_path, client, settings.chat_id, settings.tz)).start()
     log.info("bot started")
     try:
         poll_loop(client, handler)

@@ -7,6 +7,7 @@ from app.dtc import format_averias
 from app.gpx import to_gpx
 from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
+from app.scans import create_scan
 from app.trip_text import format_trip_detail, format_trip_list, trip_list_keyboard
 from app.trips import get_trip, list_trips
 from app.vehicle import format_estado
@@ -19,6 +20,11 @@ START_TEXT = (
     "/trayectos · últimos trayectos\n"
     "/estado · motor y batería\n"
     "/averias · averías guardadas"
+)
+
+APAGADO_TEXT = (
+    "🅿️ El coche está apagado. Las averías se leen solas cada vez que arranca; "
+    "/averias muestra la última lectura."
 )
 
 
@@ -98,5 +104,11 @@ def handle_update(update: dict, *, chat_id: int, client, conn, now_ms: int, tz: 
         client.send_message(chat_id, format_estado(conn, now_ms, tz))
     elif cmd == "/averias":
         client.send_message(chat_id, format_averias(conn, now_ms, tz))
+    elif cmd == "/escanear":
+        if car_status(conn, now_ms).state in {"parked", "no_signal", "no_data"}:
+            client.send_message(chat_id, APAGADO_TEXT)
+        else:
+            create_scan(conn, now_ms)
+            client.send_message(chat_id, "🔍 Leyendo averías… (tarda menos de un minuto)")
     elif cmd == "/start":
         client.send_message(chat_id, START_TEXT)
