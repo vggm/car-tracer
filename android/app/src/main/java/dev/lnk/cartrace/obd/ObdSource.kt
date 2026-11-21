@@ -68,7 +68,11 @@ class ObdSource(
         while (true) {
             val id = pendingScans.poll() ?: return
             try {
-                readDtcs(t)
+                if (!readDtcs(t, strict = true)) {
+                    // ELM error (not NO DATA): an empty list would be a false "no faults"
+                    send(Events.DTC_SCAN_FAILED, "$id obd_error")
+                    continue
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -196,12 +200,20 @@ class ObdSource(
 
     private var supported: Set<String> = emptySet()
 
-    private suspend fun readDtcs(t: ElmTransport) {
-        val active = ElmParser.dtcs(t.command("03"), '3')
-        val pending = ElmParser.dtcs(t.command("07"), '7')
+    /** With [strict], returns false (emitting nothing) if 03/07 answered an ELM error other than NO DATA. */
+    private suspend fun readDtcs(t: ElmTransport, strict: Boolean = false): Boolean {
+        val rawActive = t.command("03")
+        val rawPending = t.command("07")
+        if (strict && (isFailure(rawActive) || isFailure(rawPending))) return false
+        val active = ElmParser.dtcs(rawActive, '3')
+        val pending = ElmParser.dtcs(rawPending, '7')
         val s = sessionProvider()
         safeEmit(DtcRecord(newId(), s.id, s.nextSeq(), 0, active, pending))
+        return true
     }
+
+    private fun isFailure(raw: String) =
+        ElmParser.isError(raw) && ElmParser.clean(raw).none { it.contains("NODATA") }
 
     private suspend fun poll(t: ElmTransport) {
         val pids = Pid.entries.filter { it.cmd in supported }

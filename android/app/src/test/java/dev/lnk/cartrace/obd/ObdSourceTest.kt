@@ -37,6 +37,7 @@ private class ScriptedTransport(
 ) : ElmTransport {
     var closed = false
     var failOn03 = false
+    var answer03: String? = null
     private var count = 0
     private var lastSp = ""
     override suspend fun open() { openError?.let { throw it } }
@@ -52,7 +53,7 @@ private class ScriptedTransport(
             "0100" -> if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
             "0120" -> MASK_0120
             "0140" -> MASK_0140
-            "03" -> "43 01 33 00 00 00 00\r\r>"
+            "03" -> answer03 ?: "43 01 33 00 00 00 00\r\r>"
             "07" -> "47 02 00 00 00 00 00\r\r>"
             "ATRV" -> "12.6V\r\r>"
             "010C" -> "41 0C 1A F8\r\r>"
@@ -515,6 +516,37 @@ class ObdSourceTest {
         assertEquals(listOf("x obd_error"), failed.map { it.detail })
         assertTrue(events().none { it.event == Events.DTC_SCAN })
         assertTrue(src.state.value is ObdState.Retrying)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWithElmErrorEmitsObdErrorAndKeepsLink() = runTest {
+        val transport = ScriptedTransport(mutableListOf())
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val before = records.size
+        transport.answer03 = "STOPPED\r\r>"
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        val after = records.drop(before)
+        assertEquals(listOf("x obd_error"), events().filter { it.event == Events.DTC_SCAN_FAILED }.map { it.detail })
+        assertTrue(events().none { it.event == Events.DTC_SCAN })
+        assertTrue(after.none { it is DtcRecord })
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWithNoDataIsAValidEmptyScan() = runTest {
+        val transport = ScriptedTransport(mutableListOf())
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        transport.answer03 = "NO DATA\r\r>"
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        assertEquals(listOf("x"), events().filter { it.event == Events.DTC_SCAN }.map { it.detail })
         job.cancel()
     }
 
