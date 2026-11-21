@@ -118,6 +118,7 @@ object Events {
     const val OBD_CONNECTED = "obd_connected"
     const val OBD_LOST = "obd_lost"
     const val OBD_ERROR = "obd_error"
+    const val OBD_ATTEMPT_FAILED = "obd_attempt_failed"
     const val DTC_SCAN = "dtc_scan"
     const val DTC_SCAN_FAILED = "dtc_scan_failed"
     const val DTC_CLEAR = "dtc_clear"

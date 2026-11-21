@@ -34,6 +34,8 @@ private class ScriptedTransport(
     val failSps: Set<String> = emptySet(),
     val lostMessage: String = "link lost",
     val timeouts: MutableMap<String, Long> = mutableMapOf(),
+    val atrv: String = "12.6V\r\r>",
+    val timeoutOn0100: String? = null,
 ) : ElmTransport {
     var closed = false
     var failOn03 = false
@@ -54,12 +56,12 @@ private class ScriptedTransport(
         return when (cmd) {
             "ATZ" -> "ELM327 v1.5\r\r>"
             "ATDPN" -> "$dpn\r\r>"
-            "0100" -> if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
+            "0100" -> if (timeoutOn0100 != null) throw IOException(timeoutOn0100) else if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
             "0120" -> MASK_0120
             "0140" -> MASK_0140
             "03" -> answer03 ?: "43 01 33 00 00 00 00\r\r>"
             "07" -> "47 02 00 00 00 00 00\r\r>"
-            "ATRV" -> "12.6V\r\r>"
+            "ATRV" -> atrv
             "04" -> answer04
             "010C" -> rpmAnswer
             "010D" -> "41 0D 32\r\r>"
@@ -248,6 +250,96 @@ class ObdSourceTest {
         assertTrue(errs[0].detail!!.contains("UNABLE TO CONNECT"))
         assertTrue(src.state.value is ObdState.Retrying)
         assertTrue(events().none { it.event == Events.OBD_CONNECTED })
+        job.cancel()
+    }
+
+    private fun attempts() = events().filter { it.event == Events.OBD_ATTEMPT_FAILED }.map { it.detail!! }
+
+    @Test
+    fun openFailureIsReportedAsAttempt() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), openError = IOException("connect failed")) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(attempts().single().startsWith("n=1 t=0s v=? | open: connect failed"))
+        job.cancel()
+    }
+
+    @Test
+    fun unableOnEveryCandidateListsThemAndVoltage() = runTest {
+        val src = source {
+            ScriptedTransport(mutableListOf(), on0100 = "UNABLE TO CONNECT\r\r>", atrv = "12.4V\r\r>")
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(
+            "n=1 t=0s v=12.4V | 0: UNABLE TO CONNECT | 5: UNABLE TO CONNECT | 4: UNABLE TO CONNECT | 3: UNABLE TO CONNECT",
+            attempts().first(),
+        )
+        job.cancel()
+    }
+
+    @Test
+    fun noSupportedPidsKeepsRawResponse() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "7F0112\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(attempts().first().contains("| 0: no supported PIDs [7F0112] |"))
+        job.cancel()
+    }
+
+    @Test
+    fun firstPidTimeoutEndsLoopAndSkipsVoltage() = runTest {
+        val log = mutableListOf<String>()
+        val src = source {
+            ScriptedTransport(log, timeoutOn0100 = "timeout after 30000ms waiting for 0100")
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(
+            "n=1 t=0s v=? | 0: timeout after 30000ms waiting for 0100",
+            attempts().single(),
+        )
+        assertFalse(log.contains("ATRV"))
+        job.cancel()
+    }
+
+    @Test
+    fun secondAttemptCountsAndUsesVirtualTime() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), openError = IOException("connect failed")) }
+        val job = launch { src.run() }
+        advanceTimeBy(5_100)
+        val a = attempts()
+        assertEquals(2, a.size)
+        assertTrue(a[1].startsWith("n=2 t=5s v=? | open:"))
+        job.cancel()
+    }
+
+    @Test
+    fun connectedDetailCarriesAttemptAndRestartsAfterLoss() = runTest {
+        var created = 0
+        val src = source {
+            when (++created) {
+                1 -> ScriptedTransport(mutableListOf(), on0100 = "UNABLE TO CONNECT\r\r>")
+                2 -> ScriptedTransport(mutableListOf(), failAfter = 20)
+                else -> ScriptedTransport(mutableListOf())
+            }
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(20_000)
+        val connected = events().filter { it.event == Events.OBD_CONNECTED }.map { it.detail!! }
+        assertEquals("A6 n=2 t=5s", connected[0])
+        assertTrue(connected[1].startsWith("A6 n=1 t="))
+        job.cancel()
+    }
+
+    @Test
+    fun attemptEventPrecedesObdError() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "UNABLE TO CONNECT\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(5_000 + 10_000 + 1_000)
+        val names = events().map { it.event }
+        assertEquals(3, names.count { it == Events.OBD_ATTEMPT_FAILED })
+        assertEquals(listOf(Events.OBD_ATTEMPT_FAILED, Events.OBD_ATTEMPT_FAILED, Events.OBD_ATTEMPT_FAILED, Events.OBD_ERROR), names)
         job.cancel()
     }
 
