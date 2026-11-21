@@ -52,3 +52,8 @@ def test_python_m_app_exits_1_without_token(tmp_path):
                        capture_output=True, text=True, timeout=30)
     assert p.returncode == 1
     assert "CAR_TRACE_INGEST_TOKEN" in p.stderr
+
+
+def test_forwarded_panel_routes_are_404(client):
+    for path in ["/", "/static/index.html", "/api/panel/overview", "/tiles/1/0/0.png"]:
+        assert client.get(path, headers=FWD).status_code == 404, path
