@@ -146,7 +146,7 @@ def _obd_alerts(conn, trips, since, now_ms, tz) -> list[Alert]:
     return out
 
 
-def _stale(conn, now_ms, tz) -> list[Alert]:
+def _stale(conn, trips, now_ms, tz) -> list[Alert]:
     row = conn.execute(
         "SELECT session_id, ts FROM records ORDER BY ts DESC, seq DESC LIMIT 1"
     ).fetchone()
@@ -157,7 +157,7 @@ def _stale(conn, now_ms, tz) -> list[Alert]:
     return [Alert(
         f"stale:{session_id}:{ts}", "stale", "info", ts,
         f"Sin datos desde hace {days} días",
-        f"Último dato: {fmt.when(ts, now_ms, tz)}", None,
+        f"Último dato: {fmt.when(ts, now_ms, tz)}", _trip_id(trips, session_id, ts),
     )]
 
 
@@ -168,7 +168,7 @@ def compute_alerts(conn: sqlite3.Connection, trips: list[Trip], now_ms: int, tz:
         + _overheat(trips, since, tz)
         + _obd_alerts(conn, trips, since, now_ms, tz)
         + _no_obd(trips, since, tz)
-        + _stale(conn, now_ms, tz)
+        + _stale(conn, trips, now_ms, tz)
     )
     alerts.sort(key=lambda a: a.id)
     alerts.sort(key=lambda a: a.ts, reverse=True)

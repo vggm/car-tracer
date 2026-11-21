@@ -1,6 +1,7 @@
 import json
 
 from app import db
+from app.dtc import describe
 from app.alerts import RECENT_MS, WINDOW_MS, Alert, compute_alerts, recent_count
 from app.trips import list_trips
 
@@ -75,7 +76,7 @@ def test_new_dtc_plural_title(tmp_path):
     dtc(conn, NOW - 1000, active=["P0401", "P0409"])
     (a,) = kinds(alerts(conn), "new_dtc")
     assert a.title == "Averías nuevas: P0401, P0409"
-    assert "; " in a.detail
+    assert a.detail == f"{describe('P0401')}; {describe('P0409')}"
 
 
 def test_first_dtc_reading_gives_no_alert(tmp_path):
@@ -99,7 +100,7 @@ def test_overheat_threshold_inclusive(tmp_path):
     assert a.title == "Motor caliente: 105 °C"
     assert a.severity == "high"
     assert a.ts == NOW - 3_600_000
-    assert a.detail.startswith("Trayecto del ")
+    assert a.detail == "Trayecto del Sábado 11 de abril a las 00:00"
 
 
 def test_overheat_just_below_threshold(tmp_path):
@@ -116,6 +117,7 @@ def test_battery_low_engine_off_min_per_session(tmp_path):
     assert a.title == "Batería baja: 11,7 V"
     assert a.ts == NOW - 3000
     assert a.severity == "warn"
+    assert a.detail == "Con el motor parado, hoy 00:59"
 
 
 def test_battery_low_without_rpm_uses_engine_on_voltage(tmp_path):
@@ -155,7 +157,7 @@ def test_no_obd_trip_alert_links_trip(tmp_path):
     assert a.trip_id == trip.id
     assert a.severity == "info"
     assert a.title == "Trayecto sin datos del motor"
-    assert " km · " in a.detail
+    assert a.detail == "3,0 km · Sábado 11 de abril a las 00:00"
 
 
 def test_stale_after_three_days(tmp_path):
@@ -165,6 +167,8 @@ def test_stale_after_three_days(tmp_path):
     assert a.title == "Sin datos desde hace 3 días"
     assert a.ts == NOW - 3 * DAY - 1
     assert a.id == f"stale:s1:{NOW - 3 * DAY - 1}"
+    assert a.detail == "Último dato: mié 8 00:59"
+    assert a.trip_id is None
 
     conn2 = _conn(tmp_path, "t2.db")
     obd(conn2, NOW - 3 * DAY, voltage_v=13.5, rpm=1000)
@@ -186,6 +190,23 @@ def test_sorted_newest_first_and_ids_stable(tmp_path):
     assert [a.id for a in first] == [a.id for a in second]
     assert len(first) >= 2
     assert [a.ts for a in first] == sorted((a.ts for a in first), reverse=True)
+
+
+def test_stale_links_trip_containing_last_record(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, NOW - 5 * DAY, seconds=300)
+    (trip,), _ = list_trips(conn)
+    (a,) = kinds(alerts(conn), "stale")
+    assert a.trip_id == trip.id
+
+
+def test_stale_without_trip_when_last_record_outside_trip(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, NOW - 5 * DAY, seconds=300)
+    obd(conn, NOW - 4 * DAY, voltage_v=13.5, rpm=1000)
+    (a,) = kinds(alerts(conn), "stale")
+    assert a.ts == NOW - 4 * DAY
+    assert a.trip_id is None
 
 
 def test_recent_count_seven_days():
