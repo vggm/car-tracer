@@ -21,8 +21,8 @@ android {
         applicationId = "dev.lnk.cartrace"
         minSdk = 33
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
         buildConfigField("long", "BUILD_TIME_MS", "${System.currentTimeMillis()}L")
     }
 
