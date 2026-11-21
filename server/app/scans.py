@@ -24,7 +24,10 @@ def pending_commands(conn, now_ms: int) -> list[dict]:
         " ORDER BY requested_at",
         (now_ms - SCAN_TIMEOUT_MS,),
     ).fetchall()
-    return [{"type": r[1], "id": r[0]} for r in rows]
+    # a request that already has its result is never delivered again
+    return [
+        {"type": r[1], "id": r[0]} for r in rows if _find_event(conn, r[0]) is None
+    ]
 
 
 def open_scans(conn) -> list[tuple[str, int, str]]:
@@ -35,8 +38,8 @@ def open_scans(conn) -> list[tuple[str, int, str]]:
     return [(r[0], r[1], r[2]) for r in rows]
 
 
-def _find_event(conn, scan_id: str) -> tuple[str, str, int, bool] | None:
-    """(event, detail, ts, ok) of the first event of the request's family naming it."""
+def _find_event(conn, scan_id: str) -> tuple[str, str, int, bool, str] | None:
+    """(event, detail, ts, ok, session_id) of the first event of the request's family naming it."""
     row = conn.execute(
         "SELECT kind FROM scan_requests WHERE id = ?", (scan_id,)
     ).fetchone()
@@ -45,15 +48,15 @@ def _find_event(conn, scan_id: str) -> tuple[str, str, int, bool] | None:
     if ok_event is None:
         return None
     rows = conn.execute(
-        "SELECT json_extract(data, '$.event'), json_extract(data, '$.detail'), ts"
+        "SELECT json_extract(data, '$.event'), json_extract(data, '$.detail'), ts, session_id"
         " FROM records WHERE type = 'event'"
         " AND json_extract(data, '$.event') IN (?, ?)"
         " ORDER BY ts",
         (ok_event, failed_event),
     ).fetchall()
-    for event, detail, ts in rows:
+    for event, detail, ts, session_id in rows:
         if detail and detail.split(" ", 1)[0] == scan_id:
-            return event, detail, ts, event == ok_event
+            return event, detail, ts, event == ok_event, session_id
     return None
 
 
@@ -61,8 +64,13 @@ def scan_result(conn, scan_id: str) -> tuple[str, int] | None:
     found = _find_event(conn, scan_id)
     if found is None:
         return None
-    _event, _detail, ts, ok = found
+    _event, _detail, ts, ok, _session = found
     return ("done" if ok else "failed", ts)
+
+
+def result_session(conn, scan_id: str) -> str | None:
+    found = _find_event(conn, scan_id)
+    return found[4] if found else None
 
 
 def failure_reason(conn, scan_id: str) -> str | None:
