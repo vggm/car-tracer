@@ -58,7 +58,12 @@ def main() -> int:
     client = TelegramClient(settings.bot_token, http)
     conn = connect(settings.db_path)
     try:
-        client.set_my_commands([("donde", "Dónde está el coche")])
+        client.set_my_commands([
+            ("donde", "Dónde está el coche"),
+            ("trayectos", "Últimos trayectos"),
+            ("estado", "Motor y batería"),
+            ("averias", "Averías guardadas"),
+        ])
     except (httpx.HTTPError, TelegramError) as e:
         log.warning("setMyCommands failed (%s)", type(e).__name__)
 
