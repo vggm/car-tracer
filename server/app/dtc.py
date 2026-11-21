@@ -97,7 +97,7 @@ def format_averias(conn: sqlite3.Connection, now_ms: int, tz: str) -> str:
         return "Todavía no se han leído las averías."
     ts, active, pending = latest
     read = f"leídas {fmt.when(ts, now_ms, tz)}"
-    if not active:
+    if not active and not pending:
         lines = [f"✅ Sin averías guardadas · {read}"]
     else:
         lines = [f"⚠️ Averías guardadas · {read}", *format_codes(active)]
