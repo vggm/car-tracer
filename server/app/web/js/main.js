@@ -31,6 +31,7 @@ async function loadBadge() {
     const n = (data.alerts || []).filter((a) => a.ts >= since).length;
     if (n > 0) {
       badge.textContent = String(n);
+      badge.setAttribute("aria-label", n === 1 ? "1 aviso reciente" : `${n} avisos recientes`);
       badge.hidden = false;
     }
   } catch (e) {
