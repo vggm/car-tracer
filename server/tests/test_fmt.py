@@ -52,5 +52,6 @@ def test_when():
     assert fmt.when(ms(2026, 11, 10, 18, 26), NOW, TZ) == "10 nov 18:26"
 
 
-def test_long_day():
-    assert fmt.long_day(ms(2026, 11, 19, 18, 12), TZ) == "jue 19 nov"
+def test_full_day():
+    assert fmt.full_day(ms(2026, 11, 20, 18, 12), TZ) == "Viernes 20 de noviembre"
+    assert fmt.full_day(ms(2026, 3, 4, 9, 0), TZ) == "Miércoles 4 de marzo"

@@ -23,9 +23,11 @@ NOW = 1_700_000_000_000
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.parse_modes = []
 
-    def send_message(self, chat_id, text, reply_markup=None):
+    def send_message(self, chat_id, text, reply_markup=None, parse_mode=None):
         self.calls.append(("message", chat_id, text))
+        self.parse_modes.append(parse_mode)
         if reply_markup is not None:
             self.calls.append(("markup", reply_markup))
 
@@ -257,6 +259,7 @@ def test_trayectos_sends_list_and_keyboard(conn):
     assert c.calls[0][0] == "message" and "Últimos trayectos" in c.calls[0][2]
     assert c.calls[1][0] == "markup"
     assert c.calls[1][1]["inline_keyboard"][0][0]["callback_data"].startswith("trip:")
+    assert c.parse_modes == ["HTML"]
 
 
 def test_trayectos_empty(conn):
@@ -273,7 +276,8 @@ def test_callback_trip_answers_detail_and_gpx(conn):
     c2 = FakeClient()
     run(cb(data), conn, c2)
     assert c2.calls[0] == ("answer", "q1")
-    assert c2.calls[1][0] == "message" and "Trayecto del" in c2.calls[1][2]
+    assert c2.calls[1][0] == "message" and "🕒" in c2.calls[1][2]
+    assert c2.parse_modes == ["HTML"]
     kind, chat, name, content = c2.calls[2]
     assert kind == "document" and chat == CHAT
     assert name.startswith("trayecto-") and name.endswith(".gpx")
@@ -308,6 +312,7 @@ def test_callback_trips_older_page(conn):
     run(cb(f"trips:{NOW - 3_600_000}"), conn, c)
     assert c.calls[0] == ("answer", "q1")
     assert c.calls[1][0] == "message" and "Últimos trayectos" in c.calls[1][2]
+    assert c.parse_modes == ["HTML"]
 
 
 def test_callback_other_chat_ignored(conn):
@@ -356,6 +361,20 @@ def test_client_new_methods():
     assert b'filename="trayecto-x.gpx"' in body and b"<gpx/>" in body
 
 
+def test_send_message_parse_mode_only_when_given():
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    client = TelegramClient("TEST:FAKE", httpx.Client(transport=httpx.MockTransport(handler)))
+    client.send_message(CHAT, "plain")
+    client.send_message(CHAT, "<b>x</b>", parse_mode="HTML")
+    assert seen[0] == {"chat_id": CHAT, "text": "plain"}
+    assert seen[1] == {"chat_id": CHAT, "text": "<b>x</b>", "parse_mode": "HTML"}
+
+
 def test_send_document_error_hides_token():
     marker = "TEST:FAKE-MARKER"
     t = httpx.MockTransport(lambda r: httpx.Response(500))
@@ -378,7 +397,7 @@ def test_callback_still_handled_when_answer_fails(conn, caplog):
     data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
     c2 = FailingAnswer()
     run(cb(data), conn, c2)
-    assert c2.calls[0][0] == "message" and "Trayecto del" in c2.calls[0][2]
+    assert c2.calls[0][0] == "message" and "🕒" in c2.calls[0][2]
     assert c2.calls[1][0] == "document"
     assert "HTTP 400" not in caplog.text
 
