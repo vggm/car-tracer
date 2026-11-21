@@ -12,10 +12,11 @@ function statusCard(current) {
   if (!current) return card("Estado", emptyState("Todavía no se han leído las averías"));
   const { active, pending, ts } = current;
   const kids = [];
-  if (!active.length) {
+  if (!active.length && !pending.length) {
     kids.push(el("div", { class: "dtc-head" }, el("span", { class: "dot ok" }), el("strong", {}, "Sin averías guardadas")));
   } else {
-    kids.push(el("div", { class: "dtc-head" }, el("strong", {}, "Averías guardadas")), codeRows(active));
+    kids.push(el("div", { class: "dtc-head" }, el("strong", {}, "Averías guardadas")));
+    if (active.length) kids.push(codeRows(active));
   }
   if (pending.length && same(active, pending)) {
     kids.push(el("p", { class: "dtc-note" }, "Pendientes: las mismas."));
@@ -33,7 +34,7 @@ const TEXT = {
 
 function historyCard(history) {
   if (!history.length) return null;
-  const items = history.map((h) => {
+  const items = history.filter((h) => h.kind === "cleared" || TEXT[h.kind]).map((h) => {
     let label, tone;
     if (h.kind === "cleared") {
       label = "Averías borradas";
@@ -48,6 +49,7 @@ function historyCard(history) {
       el("div", { class: "tl-text" }, label),
       el("div", { class: "tl-date num" }, dateShort(h.ts)));
   });
+  if (!items.length) return null;
   return card("Historial", el("ol", { class: "timeline" }, items));
 }
 
