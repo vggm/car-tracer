@@ -13,7 +13,7 @@ from app.dtc import format_codes
 log = logging.getLogger("car-trace.bot")
 SCAN_POLL_S = 2
 RESULT_GRACE_MS = 30_000  # a command delivered late in its window still gets answered
-REREAD_WINDOW_MS = 30_000
+REREAD_WINDOW_MS = 5_000
 
 FAILED_TEXT = "⚠️ La tablet no está conectada al ELM327 ahora mismo."
 TIMEOUT_TEXT = "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato."

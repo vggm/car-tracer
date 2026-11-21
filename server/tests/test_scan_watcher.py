@@ -285,3 +285,12 @@ def test_clear_reread_ignores_other_session_and_stale(conn):
     c = FakeClient()
     check_scans(conn, c, CHAT, NOW + 10_000, TZ)
     assert c.sent == [(CHAT, "✅ Averías borradas.")]
+
+
+def test_clear_reread_ignores_same_session_reading_10s_before_event(conn):
+    sid = clear_scan(conn)
+    add_dtc(conn, "pre", NOW + 5_000 - 10_000, ["P0401"])
+    add_result(conn, sid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "✅ Averías borradas.")]
