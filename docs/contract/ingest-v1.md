@@ -42,7 +42,7 @@ Campos por tipo:
 | `gps` | `lat` [-90, 90], `lon` [-180, 180], `acc_m` ≥ 0 obligatorios; `speed_mps` ≥ 0, `bearing` [0, 360), `alt_m` opcionales |
 | `obd` | `values`: objeto no vacío, claves `^[a-z0-9_]{1,32}$`, valores numéricos. Claves conocidas: `rpm`, `speed_kmh`, `coolant_c`, `intake_kpa`, `load_pct`, `throttle_pct`, `voltage_v`, `fuel_rate_lph`. Las desconocidas se aceptan y se guardan (compatibilidad hacia delante) |
 | `dtc` | `active` y `pending`: listas de códigos `^[PCBU][0-9A-F]{4}$` (pueden estar vacías) |
-| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `dtc_scan`, `dtc_scan_failed`}; `detail` opcional, ≤ 200 caracteres. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> obd_not_connected"` |
+| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `dtc_scan`, `dtc_scan_failed`}; `detail` opcional, ≤ 200 caracteres. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `obd_error` (el adaptador respondió con error o se perdió el enlace durante la lectura)} |
 
 `device_id` sigue `^[a-z0-9-]{1,64}$`; `app_version` es texto de ≤ 32 caracteres.
 

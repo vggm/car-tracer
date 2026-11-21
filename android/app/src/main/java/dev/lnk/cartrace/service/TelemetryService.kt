@@ -206,6 +206,7 @@ class TelemetryService : Service() {
     private suspend fun failDtcScan(id: String) {
         if (!handledScans.add(id)) return
         emitEvent(session.get(), Events.DTC_SCAN_FAILED, "$id obd_not_connected")
+        uploadLoop?.resetBackoff() // the bot is waiting: do not sit out the upload interval
     }
 
     private val handledScans: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -241,7 +242,10 @@ class TelemetryService : Service() {
                     LoggingElmTransport(inner, elmLog)
                 },
                 clocks = graph.clocks,
-                emit = { record, stamp -> graph.queue.add(record, stamp) },
+                emit = { record, stamp ->
+                    graph.queue.add(record, stamp)
+                    if (record is EventRecord && record.event in SCAN_RESULT_EVENTS) uploadLoop?.resetBackoff()
+                },
                 sessionProvider = { session.get() },
                 protocolStore = graph.protocolStore,
                 adapterAddress = snap.adapterAddress,
@@ -330,6 +334,7 @@ class TelemetryService : Service() {
     }
 
     private companion object {
+        val SCAN_RESULT_EVENTS = setOf(Events.DTC_SCAN, Events.DTC_SCAN_FAILED)
         const val TAG = "CarTrace"
         const val CHANNEL_ID = "telemetry"
         const val NOTIFICATION_ID = 307
