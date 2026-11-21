@@ -56,7 +56,7 @@ def _send_trip_list(client, chat_id, conn, now_ms, tz, before_ts, empty_text) ->
         client.send_message(chat_id, empty_text)
         return
     client.send_message(chat_id, format_trip_list(trips, now_ms, tz),
-                        reply_markup=trip_list_keyboard(trips, has_more))
+                        reply_markup=trip_list_keyboard(trips, has_more), parse_mode="HTML")
 
 
 def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
@@ -67,7 +67,8 @@ def _send_trip(client, chat_id, conn, tz, trip_id: str) -> None:
     if trip is None:
         client.send_message(chat_id, "Ese trayecto ya no está disponible.")
         return
-    client.send_message(chat_id, format_trip_detail(trip, tz, bool(trip.points)))
+    client.send_message(chat_id, format_trip_detail(trip, tz, bool(trip.points)),
+                        parse_mode="HTML")
     if trip.points:
         filename, content = to_gpx(trip.points, trip.start_ts, tz)
         client.send_document(chat_id, filename, content)

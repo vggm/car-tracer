@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,32 +25,39 @@ def mk(id_, start, end, km=6.3, **kw):
 NOW = ms(2026, 11, 21, 20, 0)
 
 
-def two():
+def three():
     return [
-        mk("a", ms(2026, 11, 21, 18, 12), ms(2026, 11, 21, 18, 26)),
-        mk("b", ms(2026, 11, 20, 13, 5), ms(2026, 11, 20, 13, 14), km=3.1),
+        mk("a", ms(2026, 11, 21, 18, 26), ms(2026, 11, 21, 18, 33), km=2.1),
+        mk("b", ms(2026, 11, 20, 23, 55) + 40_000, ms(2026, 11, 21, 0, 0), km=1.0),
+        mk("c", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26), km=5.2),
     ]
 
 
 def test_list_text():
-    assert format_trip_list(two(), NOW, TZ) == (
-        "🚗 Últimos trayectos\n"
-        "1. Hoy 18:12 → 18:26 · 14 min · 6,3 km\n"
-        "2. Ayer 13:05 → 13:14 · 9 min · 3,1 km"
+    assert format_trip_list(three(), NOW, TZ) == (
+        "🚗 <b>Últimos trayectos</b>\n"
+        "\n"
+        "<b>Hoy</b>\n"
+        "1️⃣ 18:26 → 18:33 · <b>2,1 km</b> · 7 min\n"
+        "\n"
+        "<b>Ayer</b>\n"
+        "2️⃣ 23:55 → 00:00 · <b>1,0 km</b> · 4 min\n"
+        "3️⃣ 18:12 → 18:26 · <b>5,2 km</b> · 14 min"
     )
 
 
 def test_list_min_one_minute():
     t = mk("c", ms(2026, 11, 21, 18, 0), ms(2026, 11, 21, 18, 0) + 10_000, km=0.4)
-    assert "· 1 min · 0,4 km" in format_trip_list([t], NOW, TZ)
+    assert "<b>0,4 km</b> · 1 min" in format_trip_list([t], NOW, TZ)
 
 
 def test_keyboard():
-    ts = two()
+    ts = three()
     kb = trip_list_keyboard(ts, False)
     assert kb == {"inline_keyboard": [[
-        {"text": "1", "callback_data": "trip:a"},
-        {"text": "2", "callback_data": "trip:b"},
+        {"text": "1️⃣", "callback_data": "trip:a"},
+        {"text": "2️⃣", "callback_data": "trip:b"},
+        {"text": "3️⃣", "callback_data": "trip:c"},
     ]]}
     kb = trip_list_keyboard(ts, True)
     assert kb["inline_keyboard"][1] == [
@@ -58,46 +66,75 @@ def test_keyboard():
     assert trip_list_keyboard([], True) is None
 
 
-def test_detail_spec_example():
-    t = mk("a", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26))
-    assert format_trip_detail(t, TZ, True) == (
-        "🚗 Trayecto del vie 20 nov\n"
-        "🕒 18:12 → 18:26 (14 min)\n"
-        "📏 6,3 km · media 27 km/h · máx. 62 km/h\n"
-        "⏸️ Al ralentí: 3 min (21 %)\n"
-        "🌡️ Motor: de 40 °C a 87 °C\n"
-        "⚙️ Revoluciones: media 1.450 · máx. 3.200 rpm\n"
+def full():
+    return mk("a", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26), km=5.2,
+              max_kmh=80.0, idle_ms=int(3.78 * 60_000), coolant_start=74.0,
+              coolant_max=91.0, rpm_avg=1305.0, rpm_max=2771.0)
+
+
+def test_detail_full():
+    assert format_trip_detail(full(), TZ, True) == (
+        "🚗 <b>Viernes 20 de noviembre</b>\n"
+        "🕒 18:12 → 18:26 · 14 min\n"
+        "\n"
+        "📏 <b>5,2 km</b> · media 22 km/h · máx. 80 km/h\n"
+        "\n"
+        "⚙️ <b>Motor</b>\n"
+        "• Ralentí: 4 min (27 %)\n"
+        "• Temperatura: de 74 a 91 °C\n"
+        "• Revoluciones: media 1.305 · máx. 2.771 rpm\n"
+        "\n"
         "⚠️ Averías nuevas: ninguna"
     )
 
 
 def test_detail_no_obd():
-    t = mk("a", ms(2026, 11, 19, 18, 12), ms(2026, 11, 19, 18, 26), has_obd=False,
-           coolant_start=None, coolant_max=None, rpm_avg=None, rpm_max=None)
-    out = format_trip_detail(t, TZ, True)
-    assert out.startswith("🚗 Trayecto del jue 19 nov")
-    assert "Sin datos del motor en este trayecto" in out
-    assert "ralentí" not in out and "Motor:" not in out and "Revoluciones" not in out
+    t = replace(full(), has_obd=False)
+    assert format_trip_detail(t, TZ, True) == (
+        "🚗 <b>Viernes 20 de noviembre</b>\n"
+        "🕒 18:12 → 18:26 · 14 min\n"
+        "\n"
+        "📏 <b>5,2 km</b> · media 22 km/h · máx. 80 km/h\n"
+        "\n"
+        "⚙️ Sin datos del motor en este trayecto\n"
+        "\n"
+        "⚠️ Averías nuevas: ninguna"
+    )
+
+
+def test_detail_no_max_speed():
+    t = replace(full(), max_kmh=None)
+    assert "📏 <b>5,2 km</b> · media 22 km/h\n" in format_trip_detail(t, TZ, True)
+    assert "máx. None" not in format_trip_detail(t, TZ, True)
 
 
 def test_detail_dtcs():
-    t = mk("a", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26),
-           new_dtcs=["P0401", "P0420"])
-    assert format_trip_detail(t, TZ, True).endswith("⚠️ Averías nuevas: P0401, P0420")
+    t = replace(full(), new_dtcs=["P0401", "P0409"])
+    assert format_trip_detail(t, TZ, True).endswith("⚠️ Averías nuevas: P0401, P0409")
+
+
+def test_detail_dtcs_escaped():
+    t = replace(full(), new_dtcs=["<b>"])
+    assert format_trip_detail(t, TZ, True).endswith("⚠️ Averías nuevas: &lt;b&gt;")
 
 
 def test_detail_dtcs_none_omitted():
-    t = mk("a", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26), new_dtcs=None)
+    t = replace(full(), new_dtcs=None)
     assert "Averías" not in format_trip_detail(t, TZ, True)
 
 
+def test_detail_partial_obd_lines_omitted():
+    t = replace(full(), coolant_start=None, rpm_avg=None)
+    out = format_trip_detail(t, TZ, True)
+    assert "Temperatura" not in out and "Revoluciones" not in out and "Ralentí" in out
+
+
 def test_detail_no_route():
-    t = mk("a", ms(2026, 11, 20, 18, 12), ms(2026, 11, 20, 18, 26))
-    out = format_trip_detail(t, TZ, False)
-    assert out.endswith("📎 Sin posiciones GPS válidas para la ruta")
+    out = format_trip_detail(full(), TZ, False)
+    assert out.endswith("⚠️ Averías nuevas: ninguna\n\n📎 Sin posiciones GPS válidas para la ruta")
 
 
 def test_midnight_crossing_shows_start_day():
     t = mk("a", ms(2026, 11, 20, 23, 50), ms(2026, 11, 21, 0, 20))
-    assert format_trip_detail(t, TZ, True).startswith("🚗 Trayecto del vie 20 nov")
-    assert "Ayer 23:50 → 00:20 · 30 min" in format_trip_list([t], NOW, TZ)
+    assert format_trip_detail(t, TZ, True).startswith("🚗 <b>Viernes 20 de noviembre</b>")
+    assert "<b>Ayer</b>\n1️⃣ 23:50 → 00:20" in format_trip_list([t], NOW, TZ)
