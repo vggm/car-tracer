@@ -59,7 +59,7 @@ def test_duplicate_ids_within_batch(client):
     req = load("valid-mixed")["request"]
     req = {**req, "records": [req["records"][0], req["records"][0]]}
     r = client.post("/api/v1/ingest", json=req, headers=HDR)
-    assert r.json() == {"accepted": 1, "duplicates": 1, "rejected": []}
+    assert r.json() == {"accepted": 1, "duplicates": 1, "rejected": [], "commands": []}
     assert count(client) == 1
 
 
@@ -152,3 +152,32 @@ def test_deeply_nested_json_is_400(client):
     body = b"[" * 100000 + b"]" * 100000
     assert len(body) <= LIMIT
     assert client.post("/api/v1/ingest", content=body, headers=HDR).status_code == 400
+
+
+def _scan_req():
+    req = load("valid-mixed")["request"]
+    return {**req, "records": []}
+
+
+def test_ingest_commands_empty_by_default(client):
+    r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
+    assert r.json()["commands"] == []
+
+
+def test_ingest_returns_fresh_scan_command(client):
+    from app import scans
+    from conftest import FIXED_NOW
+    sid = scans.create_scan(client.app.state.db, FIXED_NOW - 1000)
+    r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
+    assert r.json()["commands"] == [{"type": "read_dtc", "id": sid}]
+
+
+def test_ingest_omits_stale_and_closed_scans(client):
+    from app import scans
+    from conftest import FIXED_NOW
+    db = client.app.state.db
+    scans.create_scan(db, FIXED_NOW - scans.SCAN_TIMEOUT_MS - 1)
+    closed = scans.create_scan(db, FIXED_NOW - 1000)
+    scans.close_scan(db, closed, "done", FIXED_NOW)
+    r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
+    assert r.json()["commands"] == []
