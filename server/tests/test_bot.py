@@ -379,3 +379,28 @@ def test_callback_still_handled_when_answer_fails(conn, caplog):
     assert c2.calls[0][0] == "message" and "Trayecto del" in c2.calls[0][2]
     assert c2.calls[1][0] == "document"
     assert "HTTP 400" not in caplog.text
+
+
+def test_escanear_parked_replies_apagado_and_saves_nothing(conn):
+    c = FakeClient()
+    run(msg("/escanear"), conn, c)
+    assert c.calls == [("message", CHAT,
+        "🅿️ El coche está apagado. Las averías se leen solas cada vez que arranca; "
+        "/averias muestra la última lectura.")]
+    assert conn.execute("SELECT COUNT(*) FROM scan_requests").fetchone()[0] == 0
+
+
+def test_escanear_moving_creates_scan(conn):
+    add_gps(conn, NOW - 5_000)
+    add_gps(conn, NOW - 2_000, lat=40.001)
+    conn.execute(
+        "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        ("o1", "d", "s", 2, NOW - 1_000, "obd", json.dumps({"rpm": 2000, "speed_kmh": 50}), NOW),
+    )
+    from app.location import car_status
+    assert car_status(conn, NOW).state not in {"parked", "no_signal", "no_data"}
+    c = FakeClient()
+    run(msg("/escanear"), conn, c)
+    assert c.calls == [("message", CHAT, "🔍 Leyendo averías… (tarda menos de un minuto)")]
+    assert conn.execute("SELECT COUNT(*) FROM scan_requests").fetchone()[0] == 1
