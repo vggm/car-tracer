@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 USER_AGENT = "car-trace-bot/1.0 (self-hosted, personal use)"
 MAX_AGE_S = 7 * 24 * 3600
-TIMEOUT_S = 10.0
+TIMEOUT_S = 5.0
+BACKOFF_S = 60.0
 
 
 class TileCache:
@@ -21,6 +22,7 @@ class TileCache:
         self._dir = Path(directory)
         self._http = http
         self._now = now
+        self._down_until = 0.0
 
     def fetch(self, z: int, x: int, y: int) -> bytes | None:
         path = self._dir / str(z) / str(x) / f"{y}.png"
@@ -33,6 +35,8 @@ class TileCache:
             stale = data
         except OSError:
             pass
+        if self._now() < self._down_until:
+            return stale
         try:
             resp = self._http.get(URL.format(z=z, x=x, y=y),
                                   headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT_S)
@@ -42,7 +46,9 @@ class TileCache:
             tmp = path.with_name(f"{y}.png.tmp")
             tmp.write_bytes(data)
             os.replace(tmp, path)
+            self._down_until = 0.0
             return data
         except Exception as e:
+            self._down_until = self._now() + BACKOFF_S
             log.warning("tile %s/%s/%s fetch failed (%s)", z, x, y, type(e).__name__)
             return stale

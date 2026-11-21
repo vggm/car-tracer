@@ -62,3 +62,33 @@ def test_error_without_file_returns_none(tmp_path):
 
     assert make(tmp_path, boom).fetch(5, 3, 4) is None
     assert make(tmp_path, lambda r: httpx.Response(404)).fetch(5, 3, 4) is None
+
+
+def test_backoff_after_failure_skips_network_for_a_minute(tmp_path):
+    calls = []
+    clock = [NOW]
+    ok = [False]
+
+    def h(request):
+        calls.append(request)
+        return httpx.Response(200, content=b"png") if ok[0] else httpx.Response(500)
+
+    http = httpx.Client(transport=httpx.MockTransport(h))
+    c = TileCache(tmp_path, http, now=lambda: clock[0])
+    assert c.fetch(5, 1, 1) is None
+    assert len(calls) == 1
+    clock[0] += 59
+    assert c.fetch(5, 2, 2) is None
+    assert len(calls) == 1
+    p = tmp_path / "5" / "3" / "3.png"
+    p.parent.mkdir(parents=True)
+    p.write_bytes(b"old")
+    os.utime(p, (NOW - 8 * DAY, NOW - 8 * DAY))
+    assert c.fetch(5, 3, 3) == b"old"
+    assert len(calls) == 1
+    clock[0] += 2
+    ok[0] = True
+    assert c.fetch(5, 2, 2) == b"png"
+    assert len(calls) == 2
+    assert c.fetch(5, 4, 4) == b"png"  # success cleared the backoff
+    assert len(calls) == 3
