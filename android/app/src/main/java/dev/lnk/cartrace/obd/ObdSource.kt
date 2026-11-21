@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import android.util.Log
 import java.io.IOException
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ConcurrentHashMap
@@ -134,25 +135,37 @@ class ObdSource(
         }
     }
 
-    private class InitFailure(message: String, val unableToConnect: Boolean) : Exception(message)
+    private class InitFailure(
+        message: String,
+        val unableToConnect: Boolean,
+        /** Cleaned raw PID responses, kept for the diagnostic part only. */
+        val raw: String? = null,
+    ) : Exception(message)
 
     suspend fun run() {
         var backoffIdx = 0
         var unableCount = 0
+        var attempt = 0
+        val startMs = nowMs()
         while (true) {
             var connected = false
+            var opened = false
             var error: String
             var transport: ElmTransport? = null
+            val parts = mutableListOf<String>()
+            attempt++
             try {
                 transport = transportFactory()
                 _state.value = ObdState.Connecting
                 transport.open()
-                val protocol = initializeWithStoredProtocol(transport)
+                opened = true
+                val protocol = initializeWithStoredProtocol(transport, parts)
                 connected = true
                 backoffIdx = 0
                 unableCount = 0
                 _state.value = ObdState.Connected(protocol)
-                send(Events.OBD_CONNECTED, protocol)
+                send(Events.OBD_CONNECTED, "$protocol n=$attempt t=${(nowMs() - startMs) / 1000}s")
+                attempt = 0
                 readDtcs(transport)
                 poll(transport) // only returns by throwing
                 error = "poll ended"
@@ -160,6 +173,7 @@ class ObdSource(
                 throw e
             } catch (e: InitFailure) {
                 error = e.message ?: "init failed"
+                reportAttempt(attempt, startMs, parts, transport)
                 if (e.unableToConnect) {
                     if (++unableCount == UNABLE_LIMIT) send(Events.OBD_ERROR, error)
                 } else {
@@ -168,6 +182,10 @@ class ObdSource(
             } catch (e: Exception) {
                 error = e.message ?: e.javaClass.simpleName
                 if (e !is IOException) error = "${e.javaClass.simpleName}: $error"
+                if (!connected) {
+                    if (!opened) parts += "open: ${e.message ?: e.javaClass.simpleName}"
+                    reportAttempt(attempt, startMs, parts, null)
+                }
                 unableCount = 0
             } finally {
                 transport?.close()
@@ -181,10 +199,30 @@ class ObdSource(
     }
 
     /**
+     * Emits `obd_attempt_failed`. [voltageOn] is only given when the socket is still usable (InitFailure):
+     * a best-effort ATRV is read on it before the caller closes it.
+     */
+    private suspend fun reportAttempt(attempt: Int, startMs: Long, parts: List<String>, voltageOn: ElmTransport?) {
+        val voltage = voltageOn?.let {
+            try {
+                ElmParser.voltage(it.command("ATRV", VOLTAGE_TIMEOUT))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val v = voltage?.let { String.format(Locale.US, "%.1fV", it) } ?: "?"
+        val t = (nowMs() - startMs) / 1000
+        val detail = (listOf("n=$attempt t=${t}s v=$v") + parts.map { it.take(MAX_PART) }).joinToString(" | ")
+        send(Events.OBD_ATTEMPT_FAILED, detail)
+    }
+
+    /**
      * Manual preference: only that protocol. Automatic: stored protocol, then the ELM search (0),
      * then the K-line protocols the search often misses on clones. Rethrows the last failure.
      */
-    private suspend fun initializeWithStoredProtocol(t: ElmTransport): String {
+    private suspend fun initializeWithStoredProtocol(t: ElmTransport, parts: MutableList<String>): String {
         val candidates = if (protocolPreference != "0") {
             listOf(protocolPreference)
         } else {
@@ -196,7 +234,16 @@ class ObdSource(
             try {
                 return initialize(t, candidate)
             } catch (e: InitFailure) {
+                parts += "$candidate: ${e.message}" + (e.raw?.let { " [$it]" } ?: "")
                 last = e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IOException) {
+                parts += "$candidate: ${e.message ?: e.javaClass.simpleName}"
+                throw e
+            } catch (e: Exception) {
+                parts += "$candidate: ${e.javaClass.simpleName}: ${e.message}"
+                throw e
             }
         }
         throw last!!
@@ -211,10 +258,12 @@ class ObdSource(
         supported = emptySet()
         var next: String? = "0100"
         val found = linkedSetOf<String>()
+        val raws = mutableListOf<String>()
         var first = true
         while (next != null) {
             // The first request may run the whole protocol search (K-line inits take > 10 s).
             val raw = t.command(next, if (first) FIRST_PID_TIMEOUT else LONG_TIMEOUT)
+            raws += ElmParser.clean(raw).joinToString(" ")
             if (ElmParser.isError(raw)) {
                 val unable = ElmParser.isUnableToConnect(raw)
                 val busInit = ElmParser.isBusInitError(raw)
@@ -240,7 +289,7 @@ class ObdSource(
             }
         }
         // Ignition in ACC (ECU unpowered) can answer nothing readable: not a connection.
-        if (found.isEmpty()) throw InitFailure("no supported PIDs", true)
+        if (found.isEmpty()) throw InitFailure("no supported PIDs", true, raws.joinToString(" / "))
         supported = found
         // After the first OBD request, so the protocol has already been resolved.
         val dpn = ElmParser.clean(t.command("ATDPN")).firstOrNull().orEmpty()
@@ -318,6 +367,8 @@ class ObdSource(
         const val LONG_TIMEOUT = 10_000L
         const val FIRST_PID_TIMEOUT = 30_000L
         const val MAX_DETAIL = 200
+        const val MAX_PART = 60
+        const val VOLTAGE_TIMEOUT = 3_000L
         val K_LINE = setOf("3", "4", "5")
         val PROTOCOL_NUMBER = Regex("[1-9A-C]")
     }
