@@ -15,7 +15,6 @@ TRIP_GAP_MS = 120_000
 MIN_TRIP_M = 300.0
 MIN_HOP_M = 20.0
 IDLE_STEP_CAP_MS = 10_000
-IDLE_MAX_KMH = 5.0
 PAGE_SIZE = 5
 
 
@@ -103,8 +102,9 @@ def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str,
 
     idle_ms = 0
     for (t0, v0), (t1, _) in zip(obd, obd[1:]):
+        # a sample without speed_kmh is not idle (the app sends it with rpm when the ECU supports it)
         speed = v0.get("speed_kmh")
-        if (v0.get("rpm") or 0) > 0 and speed is not None and speed < IDLE_MAX_KMH:
+        if (v0.get("rpm") or 0) > 0 and speed is not None and speed < MOVING_MIN_KMH:
             idle_ms += min(t1 - t0, IDLE_STEP_CAP_MS)
 
     coolants = [float(v["coolant_c"]) for _, v in obd if v.get("coolant_c") is not None]
@@ -138,8 +138,10 @@ def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str,
     )
 
 
-def _session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
-    """All trips of a session, oldest first."""
+def _session_segments(
+    conn: sqlite3.Connection, session_id: str
+) -> list[list[tuple[int, str, dict]]]:
+    """Records of a session split at gaps, oldest first."""
     rows = [
         (ts, t, json.loads(d))
         for ts, t, d in conn.execute(
@@ -153,7 +155,12 @@ def _session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
             segments[-1].append(row)
         else:
             segments.append([row])
-    trips = (_build(conn, session_id, seg) for seg in segments)
+    return segments
+
+
+def _session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
+    """All trips of a session, oldest first."""
+    trips = (_build(conn, session_id, seg) for seg in _session_segments(conn, session_id))
     return [t for t in trips if t is not None]
 
 
@@ -161,8 +168,10 @@ def list_trips(
     conn: sqlite3.Connection, before_ts: int | None = None, limit: int = PAGE_SIZE
 ) -> tuple[list[Trip], bool]:
     """Newest trips first with start_ts < before_ts; flag = older trips exist."""
+    having, params = ("HAVING MIN(ts) < ?", (before_ts,)) if before_ts is not None else ("", ())
     sessions = conn.execute(
-        "SELECT session_id, MIN(ts) FROM records GROUP BY session_id ORDER BY 2 DESC"
+        f"SELECT session_id, MIN(ts) FROM records GROUP BY session_id {having} ORDER BY 2 DESC",
+        params,
     ).fetchall()
     found: list[Trip] = []
     for session_id, _ in sessions:
@@ -178,7 +187,7 @@ def get_trip(conn: sqlite3.Connection, trip_id: str) -> Trip | None:
     session_id, sep, start = trip_id.rpartition(":")
     if not sep or not start.isdigit():
         return None
-    for trip in _session_trips(conn, session_id):
-        if trip.start_ts == int(start):
-            return trip
+    for seg in _session_segments(conn, session_id):
+        if seg[0][0] == int(start):
+            return _build(conn, session_id, seg)
     return None
