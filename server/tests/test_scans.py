@@ -99,3 +99,17 @@ def test_failure_reason_for_read_request(conn):
     a = scans.create_scan(conn, NOW)
     add_event(conn, "dtc_scan_failed", f"{a} obd_not_connected", 1)
     assert scans.failure_reason(conn, a) == "obd_not_connected"
+
+
+def test_pending_commands_excludes_requests_with_result_event(conn):
+    cid = scans.create_scan(conn, NOW, kind="clear_dtc")
+    rid = scans.create_scan(conn, NOW + 1, kind="read_dtc")
+    add_event(conn, "dtc_clear", cid, 1)
+    add_event(conn, "dtc_scan_failed", rid + " obd_not_connected", 2)
+    assert scans.pending_commands(conn, NOW + 5_000) == []
+
+
+def test_pending_commands_keeps_request_with_other_family_result(conn):
+    cid = scans.create_scan(conn, NOW, kind="clear_dtc")
+    add_event(conn, "dtc_scan", cid, 1)
+    assert scans.pending_commands(conn, NOW + 5_000) == [{"type": "clear_dtc", "id": cid}]
