@@ -12,6 +12,8 @@ from app.dtc import format_codes
 
 log = logging.getLogger("car-trace.bot")
 SCAN_POLL_S = 2
+RESULT_GRACE_MS = 30_000  # a command delivered late in its window still gets answered
+REREAD_WINDOW_MS = 30_000
 
 FAILED_TEXT = "⚠️ La tablet no está conectada al ELM327 ahora mismo."
 TIMEOUT_TEXT = "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato."
@@ -59,12 +61,12 @@ def _done_text(conn, event_ts: int, tz: str) -> str:
     return "\n".join([f"⚠️ Averías · leídas ahora {when}", *format_codes(codes, new)])
 
 
-def _clear_done_text(conn, event_ts: int, requested_at: int) -> str:
-    # only a reading taken after the clear request says what the ECU holds now
+def _clear_done_text(conn, event_ts: int, session_id: str | None) -> str:
+    # the tablet's own re-read: same session, just before the event (tablet clock only)
     row = conn.execute(
-        "SELECT data FROM records WHERE type='dtc' AND ts <= ? AND ts >= ?"
-        " ORDER BY ts DESC LIMIT 1",
-        (event_ts, requested_at),
+        "SELECT data FROM records WHERE type='dtc' AND session_id = ?"
+        " AND ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT 1",
+        (session_id, event_ts - REREAD_WINDOW_MS, event_ts),
     ).fetchone()
     if row is None:
         return "✅ Averías borradas."
@@ -80,11 +82,11 @@ def _process(conn, scan_id, requested_at, now_ms, tz, scan_kind="read_dtc"):
         kind, ts = result
         if scan_kind == "clear_dtc":
             if kind == "done":
-                return kind, _clear_done_text(conn, ts, requested_at)
+                return kind, _clear_done_text(conn, ts, scans.result_session(conn, scan_id))
             reason = scans.failure_reason(conn, scan_id)
             return kind, CLEAR_FAILED_TEXTS.get(reason, REJECTED_TEXT)
         return kind, (_done_text(conn, ts, tz) if kind == "done" else FAILED_TEXT)
-    if now_ms - requested_at >= scans.SCAN_TIMEOUT_MS:
+    if now_ms - requested_at >= scans.SCAN_TIMEOUT_MS + RESULT_GRACE_MS:
         return "timeout", TIMEOUT_TEXT
     return None
 

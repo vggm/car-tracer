@@ -24,16 +24,16 @@ def conn(tmp_path):
     return connect(str(tmp_path / "w.db"))
 
 
-def add(conn, rid, ts, type_, data):
+def add(conn, rid, ts, type_, data, session="s"):
     conn.execute(
         "INSERT INTO records(id, device_id, session_id, seq, ts, type, data, received_at)"
         " VALUES (?,?,?,?,?,?,?,?)",
-        (rid, "d", "s", 1, ts, type_, json.dumps(data), ts),
+        (rid, "d", session, 1, ts, type_, json.dumps(data), ts),
     )
 
 
-def add_dtc(conn, rid, ts, active, pending=()):
-    add(conn, rid, ts, "dtc", {"active": list(active), "pending": list(pending)})
+def add_dtc(conn, rid, ts, active, pending=(), session="s"):
+    add(conn, rid, ts, "dtc", {"active": list(active), "pending": list(pending)}, session)
 
 
 def add_result(conn, scan_id, ts, event="dtc_scan", suffix=""):
@@ -83,9 +83,9 @@ def test_failed(conn):
 def test_timeout(conn):
     scans.create_scan(conn, NOW)
     c = FakeClient()
-    check_scans(conn, c, CHAT, NOW + 89_000, TZ)
+    check_scans(conn, c, CHAT, NOW + 119_000, TZ)
     assert c.sent == []
-    check_scans(conn, c, CHAT, NOW + 91_000, TZ)
+    check_scans(conn, c, CHAT, NOW + 121_000, TZ)
     assert c.sent == [(CHAT, "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato.")]
     check_scans(conn, c, CHAT, NOW + 95_000, TZ)
     assert len(c.sent) == 1
@@ -184,7 +184,7 @@ def clear_scan(conn, now=NOW):
 
 def test_clear_done_no_reading(conn):
     sid = clear_scan(conn)
-    add_dtc(conn, "old", NOW - 1_000, ["P0401"])  # before the request: ignored
+    add_dtc(conn, "old", NOW - 40_000, ["P0401"])  # older than the re-read window: ignored
     add_result(conn, sid, NOW + 5_000, "dtc_clear")
     c = FakeClient()
     check_scans(conn, c, CHAT, NOW + 10_000, TZ)
@@ -230,7 +230,7 @@ def test_clear_failed_reasons(conn, reason, text):
 def test_clear_timeout(conn):
     clear_scan(conn)
     c = FakeClient()
-    check_scans(conn, c, CHAT, NOW + 91_000, TZ)
+    check_scans(conn, c, CHAT, NOW + 121_000, TZ)
     assert c.sent == [(CHAT, "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato.")]
 
 
@@ -246,3 +246,42 @@ def test_read_and_clear_each_get_own_text(conn):
     assert len(texts) == 2
     assert any(t.startswith("✅ Sin averías · leídas ahora ") for t in texts)
     assert "✅ Averías borradas · ahora la centralita no tiene ninguna" in texts
+
+
+def test_timeout_waits_for_grace_period(conn):
+    sid = clear_scan(conn)
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 100_000, TZ)
+    assert c.sent == []
+    assert len(scans.open_scans(conn)) == 1
+    add_result(conn, sid, NOW + 99_000, "dtc_clear")
+    check_scans(conn, c, CHAT, NOW + 100_000, TZ)
+    assert c.sent == [(CHAT, "✅ Averías borradas.")]
+
+
+def test_timeout_after_grace_period(conn):
+    clear_scan(conn)
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 121_000, TZ)
+    assert c.sent == [(CHAT, "⌛ La tablet no ha respondido a tiempo. Prueba otra vez en un rato.")]
+
+
+def test_clear_reread_matched_by_session_despite_tablet_clock_behind(conn):
+    # tablet clock is 60 s behind the server: the re-read ts < requested_at
+    sid = clear_scan(conn)
+    add_dtc(conn, "r", NOW - 60_000 + 4_000, ["P0401"])
+    add_result(conn, sid, NOW - 60_000 + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "⚠️ Borradas, pero siguen apareciendo:\n"
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)")]
+
+
+def test_clear_reread_ignores_other_session_and_stale(conn):
+    sid = clear_scan(conn)
+    add_dtc(conn, "o", NOW + 4_000, ["P0401"], session="other")
+    add_dtc(conn, "st", NOW + 5_000 - 31_000, ["P0409"])
+    add_result(conn, sid, NOW + 5_000, "dtc_clear")
+    c = FakeClient()
+    check_scans(conn, c, CHAT, NOW + 10_000, TZ)
+    assert c.sent == [(CHAT, "✅ Averías borradas.")]
