@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import dev.lnk.cartrace.contract.Batch
+import dev.lnk.cartrace.contract.Command
 import dev.lnk.cartrace.contract.ContractJson
 import dev.lnk.cartrace.contract.EventRecord
 import dev.lnk.cartrace.core.SessionClock
@@ -65,6 +66,34 @@ class UploaderTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"accepted":2,"duplicates":1,"rejected":[]}"""))
         assertEquals(UploadOutcome.Sent(2, 1, 0), uploader.uploadOnce())
         assertEquals(0, queue.size())
+    }
+
+    @Test fun deliversCommandsFrom200() = runTest {
+        val got = mutableListOf<Command>()
+        uploader = Uploader(queue, settings, OkHttpClient(), "1.0-test", { db.queueDao().offsets().associate { it.bootCount to it.offsetMs } }, { 1 }, onCommands = { got += it })
+        fill(1)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"accepted":1,"duplicates":0,"rejected":[],"commands":[{"type":"read_dtc","id":"abc"},{"type":"future","id":"z"}]}"""))
+        assertEquals(UploadOutcome.Sent(1, 0, 0), uploader.uploadOnce())
+        assertEquals(listOf(Command("read_dtc", "abc"), Command("future", "z")), got)
+    }
+
+    @Test fun responseWithoutCommandsStillWorks() = runTest {
+        val got = mutableListOf<Command>()
+        uploader = Uploader(queue, settings, OkHttpClient(), "1.0-test", { db.queueDao().offsets().associate { it.bootCount to it.offsetMs } }, { 1 }, onCommands = { got += it })
+        fill(1)
+        server.enqueue(ok())
+        assertEquals(UploadOutcome.Sent(1, 0, 0), uploader.uploadOnce())
+        assertTrue(got.isEmpty())
+    }
+
+    @Test fun malformedCommandsDoNotBreakTheResponse() = runTest {
+        val got = mutableListOf<Command>()
+        uploader = Uploader(queue, settings, OkHttpClient(), "1.0-test", { db.queueDao().offsets().associate { it.bootCount to it.offsetMs } }, { 1 }, onCommands = { got += it })
+        fill(1)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"accepted":1,"duplicates":0,"rejected":[],"commands":[{"type":"read_dtc"},{"type":"read_dtc","id":5},{"type":"future"},{"type":"read_dtc","id":" "}]}"""))
+        assertEquals(UploadOutcome.Sent(1, 0, 0), uploader.uploadOnce())
+        assertEquals(0, queue.size())
+        assertTrue(got.isEmpty())
     }
 
     @Test fun idleWithoutRequest() = runTest {

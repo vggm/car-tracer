@@ -36,11 +36,13 @@ private class ScriptedTransport(
     val timeouts: MutableMap<String, Long> = mutableMapOf(),
 ) : ElmTransport {
     var closed = false
+    var failOn03 = false
     private var count = 0
     private var lastSp = ""
     override suspend fun open() { openError?.let { throw it } }
     override suspend fun command(cmd: String, timeoutMs: Long): String {
         if (count++ >= failAfter) throw IOException(lostMessage)
+        if (failOn03 && cmd == "03") throw IOException("link lost mid-scan")
         log += cmd
         timeouts.putIfAbsent(cmd, timeoutMs)
         if (cmd.startsWith("ATSP")) lastSp = cmd
@@ -455,6 +457,75 @@ class ObdSourceTest {
         assertTrue(src.state.value is ObdState.Retrying)
         assertTrue(events().none { it.event == Events.OBD_CONNECTED })
         job.cancel()
+    }
+
+    @Test
+    fun busInitUnableToConnectIsClassified() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "BUS INIT: UNABLE TO CONNECT\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val state = src.state.value as ObdState.Retrying
+        assertEquals("UNABLE TO CONNECT", state.error)
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWhileConnectedEmitsDtcThenEventAndDedupes() = runTest {
+        val src = source { ScriptedTransport(mutableListOf()) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        records.clear()
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        val relevant = records.filter { it is DtcRecord || (it is EventRecord && it.event == Events.DTC_SCAN) }
+        assertEquals(2, relevant.size)
+        val dtc = relevant[0] as DtcRecord
+        assertEquals(listOf("P0133"), dtc.active)
+        val ev = relevant[1] as EventRecord
+        assertEquals("x", ev.detail)
+        records.clear()
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        assertTrue(records.none { it is DtcRecord })
+        assertTrue(events().isEmpty())
+        job.cancel()
+    }
+
+    @Test
+    fun dtcScanWhenNotConnectedEmitsFailureImmediately() = runTest {
+        val src = source { ScriptedTransport(mutableListOf()) }
+        src.requestDtcScan("x")
+        val ev = events().single()
+        assertEquals(Events.DTC_SCAN_FAILED, ev.event)
+        assertEquals("x obd_not_connected", ev.detail)
+        src.requestDtcScan("x")
+        assertEquals(1, events().size)
+    }
+
+    @Test
+    fun dtcScanFailingMidReadEmitsObdError() = runTest {
+        val transport = ScriptedTransport(mutableListOf())
+        val src = source { transport }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        transport.failOn03 = true
+        src.requestDtcScan("x")
+        advanceTimeBy(500)
+        val failed = events().filter { it.event == Events.DTC_SCAN_FAILED }
+        assertEquals(listOf("x obd_error"), failed.map { it.detail })
+        assertTrue(events().none { it.event == Events.DTC_SCAN })
+        assertTrue(src.state.value is ObdState.Retrying)
+        job.cancel()
+    }
+
+    @Test
+    fun sharedHandledIdsAreNotAnsweredTwice() = runTest {
+        val shared: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+        val a = ObdSource({ ScriptedTransport(mutableListOf()) }, FakeClocks(), { r, _ -> records += r }, { session }, { currentTime }, handledScans = shared)
+        val b = ObdSource({ ScriptedTransport(mutableListOf()) }, FakeClocks(), { r, _ -> records += r }, { session }, { currentTime }, handledScans = shared)
+        a.requestDtcScan("x")
+        b.requestDtcScan("x")
+        assertEquals(1, events().count { it.event == Events.DTC_SCAN_FAILED })
     }
 
     @Test

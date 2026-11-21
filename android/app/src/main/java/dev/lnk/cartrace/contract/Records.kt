@@ -2,9 +2,16 @@
 
 package dev.lnk.cartrace.contract
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 
 /** Ingest contract v1 (docs/contract/ingest-v1.md). Property names match the JSON. */
 @Serializable
@@ -77,7 +84,33 @@ data class IngestResponse(
     val accepted: Int,
     val duplicates: Int,
     val rejected: List<Rejected> = emptyList(),
+    @Serializable(with = LenientCommands::class)
+    val commands: List<Command> = emptyList(),
 )
+
+/** A server request riding on the ingest 200 response; unknown [type]s are ignored by the app. */
+@Serializable
+data class Command(val type: String, val id: String = "")
+
+/** Decodes each command on its own: a malformed one is skipped instead of failing the whole response. */
+object LenientCommands : KSerializer<List<Command>> {
+    private val delegate = ListSerializer(Command.serializer())
+    override val descriptor: SerialDescriptor = delegate.descriptor
+
+    override fun deserialize(decoder: Decoder): List<Command> {
+        val input = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
+        val array = input.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return array.mapNotNull { el ->
+            try {
+                input.json.decodeFromJsonElement(Command.serializer(), el)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<Command>) = delegate.serialize(encoder, value)
+}
 
 object Events {
     const val SESSION_START = "session_start"
@@ -85,6 +118,8 @@ object Events {
     const val OBD_CONNECTED = "obd_connected"
     const val OBD_LOST = "obd_lost"
     const val OBD_ERROR = "obd_error"
+    const val DTC_SCAN = "dtc_scan"
+    const val DTC_SCAN_FAILED = "dtc_scan_failed"
 }
 
 val ContractJson: Json = Json {

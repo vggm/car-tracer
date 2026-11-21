@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import android.util.Log
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ConcurrentHashMap
 
 sealed interface ObdState {
     data object Connecting : ObdState
@@ -38,9 +40,44 @@ class ObdSource(
     private val protocolStore: ProtocolStore = NoProtocolStore,
     private val adapterAddress: String = "",
     private val protocolPreference: String = "0",
+    /** Scan ids already answered; the service shares one set across ObdSource instances. */
+    private val handledScans: MutableSet<String> = ConcurrentHashMap.newKeySet(),
 ) {
     private val _state = MutableStateFlow<ObdState>(ObdState.Connecting)
     val state: StateFlow<ObdState> = _state
+
+    private val pendingScans = ConcurrentLinkedQueue<String>()
+    /**
+     * Server asked for a DTC read. Thread-safe; ids already handled are ignored. While Connected the scan
+     * runs between poll cycles, otherwise `dtc_scan_failed` is emitted right away.
+     */
+    suspend fun requestDtcScan(id: String) {
+        if (!handledScans.add(id)) return
+        pendingScans.add(id)
+        if (_state.value !is ObdState.Connected) failPendingScans()
+    }
+
+    private suspend fun failPendingScans() {
+        while (true) {
+            val id = pendingScans.poll() ?: return
+            send(Events.DTC_SCAN_FAILED, "$id obd_not_connected")
+        }
+    }
+
+    private suspend fun runPendingScans(t: ElmTransport) {
+        while (true) {
+            val id = pendingScans.poll() ?: return
+            try {
+                readDtcs(t)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                send(Events.DTC_SCAN_FAILED, "$id obd_error")
+                throw e
+            }
+            send(Events.DTC_SCAN, id)
+        }
+    }
 
     private class InitFailure(message: String, val unableToConnect: Boolean) : Exception(message)
 
@@ -83,6 +120,7 @@ class ObdSource(
             if (connected) send(Events.OBD_LOST, error)
             val wait = BACKOFF_MS[minOf(backoffIdx++, BACKOFF_MS.lastIndex)]
             _state.value = ObdState.Retrying(error, wait)
+            failPendingScans()
             delay(wait)
         }
     }
@@ -123,7 +161,7 @@ class ObdSource(
             // The first request may run the whole protocol search (K-line inits take > 10 s).
             val raw = t.command(next, if (first) FIRST_PID_TIMEOUT else LONG_TIMEOUT)
             if (ElmParser.isError(raw)) {
-                val unable = ElmParser.clean(raw).any { it.contains("UNABLETOCONNECT") }
+                val unable = ElmParser.isUnableToConnect(raw)
                 val busInit = ElmParser.isBusInitError(raw)
                 if (first || unable) {
                     throw InitFailure(
@@ -171,6 +209,7 @@ class ObdSource(
         var lastEmit = nowMs()
         var lastVoltage = Long.MIN_VALUE
         while (true) {
+            runPendingScans(t)
             for (pid in pids) ElmParser.value(pid, t.command(pid.cmd))?.let { fresh[pid.key] = it }
             val now = nowMs()
             if (lastVoltage == Long.MIN_VALUE || now - lastVoltage >= VOLTAGE_EVERY_MS) {
