@@ -1,8 +1,10 @@
 """Entry point: python -m app.bot (long polling loop)."""
 import logging
+import os
 import sys
 import threading
 import time
+from pathlib import Path
 
 import httpx
 
@@ -11,6 +13,7 @@ from app.bot.scan_watcher import run_watcher
 from app.bot.telegram import TelegramClient, TelegramError
 from app.config import Settings
 from app.db import connect
+from app.tiles import TileCache
 
 log = logging.getLogger("car-trace.bot")
 MAX_BACKOFF_S = 60
@@ -59,6 +62,10 @@ def main() -> int:
     http = httpx.Client(timeout=httpx.Timeout(10.0, read=HTTP_READ_TIMEOUT_S))
     client = TelegramClient(settings.bot_token, http)
     conn = connect(settings.db_path)
+    tile_dir = Path(os.environ.get("CAR_TRACE_TILE_DIR")
+                    or Path(settings.db_path).parent / "tiles")
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    tiles = TileCache(tile_dir, httpx.Client())
     try:
         client.set_my_commands([
             ("donde", "Dónde está el coche"),
@@ -73,7 +80,8 @@ def main() -> int:
 
     def handler(update):
         handle_update(update, chat_id=settings.chat_id, client=client, conn=conn,
-                      now_ms=int(time.time() * 1000), tz=settings.tz)
+                      now_ms=int(time.time() * 1000), tz=settings.tz,
+                      fetch_tile=tiles.fetch)
 
     threading.Thread(target=run_watcher, daemon=True, name="scan-watcher",
                      args=(settings.db_path, client, settings.chat_id, settings.tz)).start()
