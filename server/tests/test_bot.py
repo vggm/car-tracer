@@ -31,6 +31,12 @@ class FakeClient:
         if reply_markup is not None:
             self.calls.append(("markup", reply_markup))
 
+    def send_photo(self, chat_id, photo, caption, parse_mode=None):
+        if getattr(self, "photo_error", None):
+            raise self.photo_error
+        self.calls.append(("photo", chat_id, photo, caption))
+        self.parse_modes.append(parse_mode)
+
     def answer_callback_query(self, callback_query_id):
         self.calls.append(("answer", callback_query_id))
 
@@ -56,8 +62,19 @@ def conn(tmp_path):
     return connect(str(tmp_path / "t.db"))
 
 
-def run(update, conn, client):
-    handle_update(update, chat_id=CHAT, client=client, conn=conn, now_ms=NOW, tz="Europe/Madrid")
+def run(update, conn, client, fetch_tile=None):
+    handle_update(update, chat_id=CHAT, client=client, conn=conn, now_ms=NOW, tz="Europe/Madrid",
+                  fetch_tile=fetch_tile)
+
+
+def grey_tile(z, x, y):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (256, 256), (200, 200, 200)).save(buf, "PNG")
+    return buf.getvalue()
 
 
 def test_donde_sends_text_then_location(conn):
@@ -265,38 +282,73 @@ def test_trayectos_empty(conn):
     assert c.calls == [("message", CHAT, "Todavía no hay trayectos.")]
 
 
-def test_callback_trip_answers_detail_with_maps_button(conn):
+def trip_callback(conn):
     drive(conn, NOW - 3_600_000)
     c = FakeClient()
     run(msg("/trayectos"), conn, c)
-    data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+    return c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+
+
+def test_callback_trip_sends_route_photo_with_detail_caption(conn):
+    data = trip_callback(conn)
     c2 = FakeClient()
-    run(cb(data), conn, c2)
-    assert c2.calls[0] == ("answer", "q1")
-    assert c2.calls[1][0] == "message" and "🕒" in c2.calls[1][2]
-    assert "Sin posiciones GPS" not in c2.calls[1][2]
+    run(cb(data), conn, c2, fetch_tile=grey_tile)
+    assert [x[0] for x in c2.calls] == ["answer", "photo"]
+    _, chat, photo, caption = c2.calls[1]
+    assert chat == CHAT and photo[:8] == b"\x89PNG\r\n\x1a\n"
+    assert "🕒" in caption and "Sin posiciones GPS" not in caption
     assert c2.parse_modes == ["HTML"]
-    button = c2.calls[2][1]["inline_keyboard"][0][0]
-    assert button["text"] == "🗺️ Ver en Google Maps"
-    assert button["url"].startswith("https://www.google.com/maps/dir/?api=1&origin=40.0")
-    assert "travelmode=driving" in button["url"]
-    assert len(c2.calls) == 3
-    assert not [x for x in c2.calls if x[0] == "document"]
+    assert not [x for x in c2.calls if x[0] in ("message", "markup")]
 
 
-def test_callback_trip_without_points_has_no_button(conn, monkeypatch):
+def test_callback_trip_render_failure_falls_back_to_message(conn, caplog):
+    data = trip_callback(conn)
+    c2 = FakeClient()
+    c3 = FakeClient()
+
+    def boom(z, x, y):
+        raise RuntimeError("tiles down")
+
+    run(cb(data), conn, c2, fetch_tile=grey_tile)
+    run(cb(data), conn, c3, fetch_tile=boom)
+    assert [x[0] for x in c3.calls] == ["answer", "message"]
+    assert c3.calls[1][2] == c2.calls[1][3]
+    assert c3.parse_modes == ["HTML"]
+
+
+def test_callback_trip_photo_send_failure_falls_back_to_message(conn):
+    data = trip_callback(conn)
+    ok = FakeClient()
+    run(cb(data), conn, ok, fetch_tile=grey_tile)
+    c = FakeClient()
+    c.photo_error = RuntimeError("boom")
+    run(cb(data), conn, c, fetch_tile=grey_tile)
+    assert [x[0] for x in c.calls] == ["answer", "message"]
+    assert c.calls[1][2] == ok.calls[1][3]
+
+
+def test_callback_trip_long_text_sends_photo_then_message(conn, monkeypatch):
+    from app.bot import commands
+
+    data = trip_callback(conn)
+    monkeypatch.setattr(commands, "format_trip_detail", lambda *a: "x" * 1500)
+    c = FakeClient()
+    run(cb(data), conn, c, fetch_tile=grey_tile)
+    assert [x[0] for x in c.calls] == ["answer", "photo", "message"]
+    assert c.calls[1][3] == ""
+    assert c.calls[2][2] == "x" * 1500
+
+
+def test_callback_trip_without_points_sends_text_only(conn, monkeypatch):
     from dataclasses import replace
 
     from app.bot import commands
 
-    drive(conn, NOW - 3_600_000)
-    c = FakeClient()
-    run(msg("/trayectos"), conn, c)
-    data = c.calls[1][1]["inline_keyboard"][0][0]["callback_data"]
+    data = trip_callback(conn)
     real = commands.get_trip
     monkeypatch.setattr(commands, "get_trip", lambda conn, tid: replace(real(conn, tid), points=[]))
     c2 = FakeClient()
-    run(cb(data), conn, c2)
+    run(cb(data), conn, c2, fetch_tile=grey_tile)
     assert [x[0] for x in c2.calls] == ["answer", "message"]
     assert c2.calls[1][2].endswith("📎 Sin posiciones GPS válidas para la ruta")
 
@@ -409,7 +461,7 @@ def test_callback_still_handled_when_answer_fails(conn, caplog):
     c2 = FailingAnswer()
     run(cb(data), conn, c2)
     assert c2.calls[0][0] == "message" and "🕒" in c2.calls[0][2]
-    assert c2.calls[1][0] == "markup"
+    assert len(c2.calls) == 1
     assert "HTTP 400" not in caplog.text
 
 
@@ -617,3 +669,31 @@ def test_borrar_other_chat_ignored(conn):
 def test_set_my_commands_includes_borrar():
     import inspect
     assert '("borrar_averias", "Borrar averías de la centralita")' in inspect.getsource(botmain.main)
+
+
+def test_send_photo_is_multipart():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    client = TelegramClient("TEST:FAKE", httpx.Client(transport=httpx.MockTransport(handler)))
+    client.send_photo(CHAT, b"\x89PNGdata", "<b>hi</b>", parse_mode="HTML")
+    r = seen[0]
+    assert r.url.path == "/botTEST:FAKE/sendPhoto"
+    assert r.headers["content-type"].startswith("multipart/form-data")
+    body = r.content
+    assert b'name="photo"; filename="route.png"' in body
+    assert b"Content-Type: image/png" in body and b"\x89PNGdata" in body
+    for field, value in (("chat_id", str(CHAT)), ("caption", "<b>hi</b>"), ("parse_mode", "HTML")):
+        assert f'name="{field}"\r\n\r\n{value}'.encode() in body
+
+
+def test_send_photo_error_hides_token():
+    marker = "TEST:FAKE-MARKER"
+    t = httpx.MockTransport(lambda r: httpx.Response(500))
+    c = TelegramClient(marker, httpx.Client(transport=t))
+    with pytest.raises(botmain.TelegramError) as ei:
+        c.send_photo(CHAT, b"x", "cap")
+    assert marker not in str(ei.value)
