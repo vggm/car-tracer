@@ -42,7 +42,7 @@ Campos por tipo:
 | `gps` | `lat` [-90, 90], `lon` [-180, 180], `acc_m` ≥ 0 obligatorios; `speed_mps` ≥ 0, `bearing` [0, 360), `alt_m` opcionales |
 | `obd` | `values`: objeto no vacío, claves `^[a-z0-9_]{1,32}$`, valores numéricos. Claves conocidas: `rpm`, `speed_kmh`, `coolant_c`, `intake_kpa`, `load_pct`, `throttle_pct`, `voltage_v`, `fuel_rate_lph`. Las desconocidas se aceptan y se guardan (compatibilidad hacia delante) |
 | `dtc` | `active` y `pending`: listas de códigos `^[PCBU][0-9A-F]{4}$` (pueden estar vacías) |
-| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `dtc_scan`, `dtc_scan_failed`}; `detail` opcional, ≤ 200 caracteres. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `obd_error` (el adaptador respondió con error o se perdió el enlace durante la lectura)} |
+| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `dtc_scan`, `dtc_scan_failed`, `dtc_clear`, `dtc_clear_failed`}; `detail` opcional, ≤ 200 caracteres. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `obd_error` (el adaptador respondió con error o se perdió el enlace durante la lectura)}. `dtc_clear`: `detail = "<id>"` de la petición de borrado atendida; `dtc_clear_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `engine_running` (motor en marcha), `rejected` (la centralita no aceptó el borrado), `obd_error` (se perdió el enlace durante el borrado)} |
 
 `device_id` sigue `^[a-z0-9-]{1,64}$`; `app_version` es texto de ≤ 32 caracteres.
 
@@ -50,13 +50,13 @@ Campos por tipo:
 
 | Respuesta | Significado | La app |
 | --- | --- | --- |
-| `200` `{"accepted": n, "duplicates": n, "rejected": [{"index": i, "id": "…", "error": "…"}], "commands": [{"type": "read_dtc", "id": "<uuid>"}]}` | Lote procesado; cada registro se valida por separado. `commands` siempre está presente (puede ser `[]`) y lista las peticiones de lectura de averías abiertas de menos de 90 s, que se reenvían en cada respuesta hasta que llega el resultado o caducan | Borra el lote entero de la cola y atiende los `commands` nuevos (ignora ids ya atendidos) |
+| `200` `{"accepted": n, "duplicates": n, "rejected": [{"index": i, "id": "…", "error": "…"}], "commands": [{"type": "read_dtc" | "clear_dtc", "id": "<uuid>"}]}` | Lote procesado; cada registro se valida por separado. `commands` siempre está presente (puede ser `[]`) y lista las peticiones abiertas (`read_dtc`: leer averías; `clear_dtc`: borrar las averías de la centralita, solo con el motor apagado) de menos de 90 s, que se reenvían en cada respuesta hasta que llega el resultado o caducan | Borra el lote entero de la cola y atiende los `commands` nuevos (ignora ids ya atendidos) |
 | `400` | El lote en sí es inválido (JSON roto, faltan `device_id` o `records`, más de 500 registros) | Lo descarta y lo anota en el registro de errores: nunca tendrá éxito |
 | `401` | Token ausente o incorrecto | Conserva el lote y muestra el error en la pantalla de estado y en la notificación |
 | `413` | Más de 256 KB | Parte el lote por la mitad y reintenta |
 | `5xx` o sin red | Fallo temporal | Reintenta con espera creciente (30 s → 10 min) |
 
-Compatibilidad: una app antigua ignora el campo `commands`. El servidor debe desplegarse antes que una app que envíe los eventos `dtc_scan` / `dtc_scan_failed`, porque un servidor anterior los rechazaría como evento desconocido.
+Compatibilidad: una app antigua ignora el campo `commands` y los tipos de orden que no conoce. El servidor debe desplegarse antes que una app que envíe los eventos `dtc_scan` / `dtc_scan_failed` / `dtc_clear` / `dtc_clear_failed`, porque un servidor anterior los rechazaría como evento desconocido.
 
 Un duplicado (mismo `id` ya guardado) cuenta en `duplicates` y no modifica lo guardado.
 
