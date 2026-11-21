@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.contract import Batch, RecordError, parse_record
 from app.db import insert_records
+from app.scans import pending_commands
 
 MAX_BODY = 262144
 
@@ -71,4 +72,10 @@ async def ingest(request: Request):
         accepted, duplicates = insert_records(
             request.app.state.db, batch.device_id, valid, now
         )
-    return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected}
+    commands = pending_commands(request.app.state.db, now)
+    return {
+        "accepted": accepted,
+        "duplicates": duplicates,
+        "rejected": rejected,
+        "commands": commands,
+    }

@@ -61,3 +61,11 @@ def test_batch_rejects_501_records():
 def test_batch_rejects_bad_device_id():
     with pytest.raises(ValidationError):
         Batch(device_id="Junsun 307", app_version="0.1.0", records=[])
+
+
+@pytest.mark.parametrize("event,detail", [
+    ("dtc_scan", "abc"),
+    ("dtc_scan_failed", "abc obd_not_connected"),
+])
+def test_scan_events_accepted(event, detail):
+    parse_record(base(type="event", event=event, detail=detail), NOW)
