@@ -23,22 +23,47 @@ function markActive(path) {
   });
 }
 
-async function loadBadge() {
-  const badge = document.getElementById("alerts-badge");
+const SEEN_KEY = "ct.alertsSeenTs";
+let cache = null; // { at, alerts }
+
+function seenTs() {
   try {
-    const data = await getJSON("/api/panel/alerts");
-    const since = Date.now() - 7 * 86400000;
-    const n = (data.alerts || []).filter((a) => a.ts >= since).length;
-    if (n > 0) {
-      badge.textContent = String(n);
-      badge.setAttribute("aria-label", n === 1 ? "1 aviso reciente" : `${n} avisos recientes`);
-      badge.hidden = false;
+    const v = Number(localStorage.getItem(SEEN_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function paintBadge(alerts) {
+  const badge = document.getElementById("alerts-badge");
+  const since = Date.now() - 7 * 86400000;
+  const seen = seenTs();
+  const n = alerts.filter((a) => a.ts >= since && a.ts > seen).length;
+  if (n > 0) {
+    badge.textContent = String(n);
+    badge.setAttribute("aria-label", n === 1 ? "1 aviso reciente" : `${n} avisos recientes`);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
+
+async function loadBadge() {
+  try {
+    if (!cache || Date.now() - cache.at >= 60000) {
+      const data = await getJSON("/api/panel/alerts");
+      cache = { at: Date.now(), alerts: data.alerts || [] };
     }
+    paintBadge(cache.alerts);
   } catch (e) {
     /* sin contador si falla */
   }
 }
 
 document.addEventListener("route", (e) => markActive(e.detail.path));
+document.addEventListener("route", loadBadge);
+document.addEventListener("alerts-seen", () => {
+  document.getElementById("alerts-badge").hidden = true;
+});
 start(routes);
-loadBadge();

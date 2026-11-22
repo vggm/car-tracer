@@ -8,12 +8,34 @@ function href(a) {
   return null;
 }
 
-function item(a) {
+const SEEN_KEY = "ct.alertsSeenTs";
+
+function readSeen() {
+  try {
+    const v = Number(localStorage.getItem(SEEN_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function markSeen(alerts) {
+  const ts = alerts.length ? Math.max(...alerts.map((a) => a.ts)) : Date.now();
+  try {
+    localStorage.setItem(SEEN_KEY, String(ts));
+  } catch (e) {
+    /* modo privado */
+  }
+  document.dispatchEvent(new CustomEvent("alerts-seen"));
+}
+
+function item(a, prevSeen) {
   const link = href(a);
   const body = [
     el("span", { class: `dot ${a.severity}` }),
     el("div", { class: "alert-main" },
-      el("div", { class: "alert-title" }, a.title),
+      el("div", { class: "alert-title" }, a.title,
+        a.ts > prevSeen && a.ts >= Date.now() - 7 * 86400000 ? el("span", { class: "tag accent", style: "margin-left:.5em" }, "nuevo") : null),
       a.detail ? el("div", { class: "alert-detail" }, a.detail) : null),
     el("div", { class: "alert-ts" }, rel(a.ts)),
   ];
@@ -33,7 +55,7 @@ const checkIcon = () => {
 };
 
 export async function render(main) {
-  document.title = "Avisos · car-trace";
+  document.title = "Avisos · Car Trace";
   main.append(el("h1", { class: "page-title" }, "Avisos"));
   const box = el("div", { class: "alert-list" });
   main.append(box);
@@ -42,8 +64,11 @@ export async function render(main) {
       const e = emptyState("Todo en orden");
       e.prepend(checkIcon());
       box.append(e);
+      markSeen([]);
       return;
     }
-    box.append(...d.alerts.map(item));
+    const prevSeen = readSeen();
+    box.append(...d.alerts.map((a) => item(a, prevSeen)));
+    markSeen(d.alerts);
   });
 }
