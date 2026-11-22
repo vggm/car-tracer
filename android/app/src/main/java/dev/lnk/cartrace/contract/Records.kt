@@ -70,6 +70,16 @@ data class EventRecord(
 ) : Record
 
 @Serializable
+@SerialName("health")
+data class HealthRecord(
+    override val id: String,
+    override val session_id: String,
+    override val seq: Long,
+    override val ts: Long,
+    val values: Map<String, Double>,
+) : Record
+
+@Serializable
 data class Batch(
     val device_id: String,
     val app_version: String,
@@ -123,7 +133,12 @@ object Events {
     const val DTC_SCAN_FAILED = "dtc_scan_failed"
     const val DTC_CLEAR = "dtc_clear"
     const val DTC_CLEAR_FAILED = "dtc_clear_failed"
+    const val OBD_TRACE = "obd_trace"
+    const val DIAG = "diag"
 }
+
+const val MAX_TRACE_DETAIL = 4000
+const val MAX_DIAG_DETAIL = 500
 
 val ContractJson: Json = Json {
     classDiscriminator = "type"
