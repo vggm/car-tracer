@@ -205,3 +205,48 @@ def test_ingest_omits_stale_and_closed_scans(client):
     scans.close_scan(db, closed, "done", FIXED_NOW)
     r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
     assert r.json()["commands"] == []
+
+
+def test_ingest_accepts_mixed_new_records(client):
+    req = load("valid-mixed")["request"]
+    tmpl = req["records"][0]
+    health = {k: v for k, v in tmpl.items() if k not in ("event", "detail")}
+    recs = [
+        {**tmpl, "id": "aaaaaaa1-113b-4b4e-aba8-bdcff7f6eda2", "seq": 901,
+         "event": "obd_trace", "detail": "x" * 4000},
+        {**tmpl, "id": "aaaaaaa2-113b-4b4e-aba8-bdcff7f6eda2", "seq": 902,
+         "event": "diag", "detail": "gps.no_fix x2 sin fix"},
+        {**health, "id": "aaaaaaa3-113b-4b4e-aba8-bdcff7f6eda2", "seq": 903,
+         "type": "health", "values": {"battery_pct": 80}},
+    ]
+    r = client.post("/api/v1/ingest", json={**req, "records": recs}, headers=HDR)
+    assert r.status_code == 200
+    assert r.json()["accepted"] == 3 and r.json()["rejected"] == []
+    stored = client.app.state.db.execute(
+        "SELECT type, data FROM records WHERE id='aaaaaaa3-113b-4b4e-aba8-bdcff7f6eda2'"
+    ).fetchone()
+    assert stored[0] == "health" and json.loads(stored[1]) == {"values": {"battery_pct": 80}}
+
+
+def test_health_does_not_affect_trips_alerts_panel(client):
+    from app.alerts import compute_alerts
+    from app.trips import list_trips
+    from tests.conftest import FIXED_NOW
+    from tests.test_panel_api import T1, T2
+    from tests.test_trip_cache import add, drive
+
+    conn = client.app.state.db
+    drive(conn, T1, 600, session="s1")
+    drive(conn, T2, 600, session="s2")
+
+    def snapshot():
+        trips, more = list_trips(conn)
+        alerts = compute_alerts(conn, trips, FIXED_NOW, "Europe/Madrid")
+        panel = client.get("/api/panel/overview").json()
+        return repr((trips, more)), repr(alerts), panel
+
+    before = snapshot()
+    for i in range(5):
+        add(conn, T1 + i * 60_000, "health", {"values": {"battery_pct": 70 - i}}, session="s1")
+    add(conn, T2 + 5000, "health", {"values": {"battery_pct": 50}}, session="s3")
+    assert snapshot() == before
