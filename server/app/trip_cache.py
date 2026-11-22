@@ -1,5 +1,8 @@
-"""In-memory cache of computed trips, recomputed from the records on every snapshot.
+"""In-memory cache of computed trips, kept per session group.
 
+A group is a chain of sessions whose gaps are within the trip gap. On every snapshot
+only the groups whose key changed (new records, or a new session bridging two groups)
+are recomputed; keys that no longer exist are dropped.
 Cached trips carry no GPS points (memory); use trips.get_trip for the full trip."""
 import dataclasses
 import sqlite3
@@ -7,29 +10,38 @@ import threading
 
 from app.trips import Trip, group_spans, range_trips, session_spans
 
+GroupKey = tuple[tuple[str, int, int], ...]
+
 
 class TripCache:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._last: tuple[list[Trip], tuple] | None = None
+        self._groups: dict[GroupKey, list[Trip]] = {}
 
     def all_trips(self, conn: sqlite3.Connection) -> list[Trip]:
-        """Every trip, newest first by start_ts. Only changed sessions are recomputed."""
+        """Every trip, newest first by start_ts. Only changed session groups are recomputed."""
         return self.snapshot(conn)[0]
 
     def snapshot(self, conn: sqlite3.Connection) -> tuple[list[Trip], tuple]:
-        """Like all_trips, plus a fingerprint that changes whenever any session changes."""
-        spans = session_spans(conn)
-        trips = [
-            dataclasses.replace(t, points=[])
-            for group in group_spans(spans)
-            for t in range_trips(conn, min(s.min_ts for s in group), max(s.max_ts for s in group))
+        """Like all_trips, plus a fingerprint that changes whenever any session group changes."""
+        keyed = [
+            (tuple(sorted((s.session_id, s.count, s.max_ts) for s in group)), group)
+            for group in group_spans(session_spans(conn))
         ]
-        trips.sort(key=lambda t: t.start_ts, reverse=True)
-        result = (trips, tuple(sorted((s.session_id, (s.count, s.max_ts)) for s in spans)))
         with self._lock:
-            self._last = result
-        return result
+            cached = self._groups
+        fresh: dict[GroupKey, list[Trip]] = {}
+        for key, group in keyed:
+            if key in cached:
+                fresh[key] = cached[key]
+            else:
+                lo = min(s.min_ts for s in group)
+                hi = max(s.max_ts for s in group)
+                fresh[key] = [dataclasses.replace(t, points=[]) for t in range_trips(conn, lo, hi)]
+        with self._lock:
+            self._groups = fresh
+        trips = sorted((t for ts in fresh.values() for t in ts), key=lambda t: t.start_ts, reverse=True)
+        return trips, tuple(sorted(fresh))
 
     def get(self, conn: sqlite3.Connection, trip_id: str) -> Trip | None:
         for trip in self.all_trips(conn):

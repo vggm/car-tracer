@@ -95,9 +95,9 @@ def test_warm_populates_cache(tmp_path):
     cold = create_app(s, clock=lambda: FIXED_NOW)
     drive(cold.state.db, T1, 300)
     cold.state.db.commit()
-    assert not cold.state.trip_cache._last
+    assert not cold.state.trip_cache._groups
     warm = create_app(s, clock=lambda: FIXED_NOW, warm=True)
     deadline = time.time() + 5
-    while time.time() < deadline and not warm.state.trip_cache._last:
+    while time.time() < deadline and not warm.state.trip_cache._groups:
         time.sleep(0.05)
-    assert warm.state.trip_cache._last
+    assert warm.state.trip_cache._groups

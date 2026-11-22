@@ -79,3 +79,42 @@ def test_cached_trips_do_not_hold_points(tmp_path):
     drive(conn, 0, 300)
     trips = TripCache().all_trips(conn)
     assert trips and all(t.points == [] for t in trips)
+
+
+def test_cache_joins_sessions(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    drive(conn, 637_000, 600, session="b", north0=6000)
+    assert len(TripCache().all_trips(conn)) == 1
+
+
+def test_cache_recomputes_only_changed_group(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 300, session="a")
+    drive(conn, 86_400_000, 300, session="b")
+    calls = [0]
+    real = trip_cache.range_trips
+
+    def spy(*args, **kwargs):
+        calls[0] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(trip_cache, "range_trips", spy)
+    cache = TripCache()
+    assert len(cache.all_trips(conn)) == 2 and calls[0] == 2
+    calls[0] = 0
+    cache.all_trips(conn)
+    assert calls[0] == 0
+    gps(conn, 86_400_000 + 305_000, north_m=3100, speed=10.0, session="b")
+    cache.all_trips(conn)
+    assert calls[0] == 1
+
+
+def test_cache_regroups_when_new_session_bridges(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 300, session="a")
+    drive(conn, 500_000, 300, session="c", north0=4000)
+    cache = TripCache()
+    assert len(cache.all_trips(conn)) == 2
+    drive(conn, 390_000, 110, session="b", north0=3000)
+    assert len(cache.all_trips(conn)) == 1
