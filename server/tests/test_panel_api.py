@@ -74,6 +74,9 @@ def test_index_and_static_served(client):
     assert client.get("/static/index.html").status_code == 200
 
 
+from urllib.parse import quote
+
+
 class _Boom:
     def __getattr__(self, name):
         raise AssertionError(f"panel used app.state.db ({name})")
@@ -81,8 +84,9 @@ class _Boom:
 
 def test_panel_does_not_use_shared_ingest_connection(client):
     _seed(client)
+    trip_id = _ids(client)[0]
     client.app.state.db = _Boom()
-    for url in ["/api/panel/overview", "/api/panel/dtc",
+    for url in [f"/api/panel/trips/{quote(trip_id, safe='')}", "/api/panel/overview", "/api/panel/dtc",
                 "/api/panel/alerts", "/api/panel/trips"]:
         assert client.get(url).status_code == 200, url
 

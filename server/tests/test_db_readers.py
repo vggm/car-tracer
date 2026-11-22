@@ -25,3 +25,26 @@ def test_thread_local_connections(tmp_path):
     assert seen["same"] and seen["conn"] is not a
     assert (99,) in seen["rows"]
     assert (99,) in a.execute("SELECT version FROM schema_version").fetchall()
+
+
+def test_reader_not_blocked_by_write_transaction(tmp_path):
+    import time
+    path = str(tmp_path / "w.db")
+    writer = connect(path)
+    readers = ThreadLocalConnections(path)
+    writer.execute("BEGIN IMMEDIATE")
+    out = {}
+
+    def work():
+        t0 = time.monotonic()
+        c = readers.get()
+        out["rows"] = c.execute("SELECT count(*) FROM schema_version").fetchall()
+        out["dt"] = time.monotonic() - t0
+
+    try:
+        t = threading.Thread(target=work)
+        t.start()
+        t.join(8)
+    finally:
+        writer.execute("ROLLBACK")
+    assert out["dt"] < 1

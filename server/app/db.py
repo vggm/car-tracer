@@ -63,6 +63,14 @@ def connect(path: str) -> sqlite3.Connection:
     return conn
 
 
+def connect_reader(path: str) -> sqlite3.Connection:
+    """Read-only opener: no schema/migration (no write lock); one thread only."""
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
 class ThreadLocalConnections:
     """One lazily opened connection per thread (for concurrent panel reads)."""
 
@@ -73,7 +81,7 @@ class ThreadLocalConnections:
     def get(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = self._local.conn = connect(self._path)
+            conn = self._local.conn = connect_reader(self._path)
         return conn
 
 
