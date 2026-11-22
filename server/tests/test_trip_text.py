@@ -152,3 +152,17 @@ def test_has_route():
     assert not has_route([])
     assert not has_route([gp(40.4168, -3.7038)])
     assert not has_route([gp(40.4168, -3.7038)] * 5)
+
+
+def test_format_journey_detail_and_list_line():
+    from app.journeys import JourneyView
+    from app.trip_text import format_journey_detail
+
+    a = mk("a", NOW - 7_200_000, NOW - 6_000_000, km=10)
+    b = mk("b", NOW - 5_760_000, NOW - 4_800_000, km=5)
+    v = JourneyView(1, [a, b])
+    out = format_journey_detail(v, TZ, True)
+    assert "• Tramo 1:" in out and "• Tramo 2:" in out and "⏸️ Parada de 4 min" in out
+    assert "<b>15,0 km</b>" in out and "al volante" in out
+    assert "2 tramos" in format_trip_list([v], NOW, TZ)
+    assert trip_list_keyboard([v], False)["inline_keyboard"][0][0]["callback_data"] == "trip:v1"

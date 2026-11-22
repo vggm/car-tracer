@@ -697,3 +697,77 @@ def test_send_photo_error_hides_token():
     with pytest.raises(botmain.TelegramError) as ei:
         c.send_photo(CHAT, b"x", "cap")
     assert marker not in str(ei.value)
+
+
+# ---- journeys ----
+
+JGAP = 240_000
+
+
+def journey_setup(conn):
+    from app.journeys import join
+    from app.trips import range_trips
+
+    t0 = NOW - 3_600_000
+    drive(conn, t0, 300)
+    drive(conn, t0 + 300_000 + JGAP, 300, north0=5000)
+    drive(conn, t0 + 600_000 + 2 * JGAP, 300, north0=10000)
+    a, b, c = range_trips(conn, 0, 10**13)
+    return join(conn, [a, b, c], a.id, b.id, 1)
+
+
+def test_list_shows_journey_line(conn):
+    journey_setup(conn)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    lines = [ln for ln in c.calls[0][2].splitlines() if "→" in ln]
+    assert len(lines) == 2
+    assert sum("2 tramos" in ln for ln in lines) == 1
+    buttons = c.calls[1][1]["inline_keyboard"][0]
+    assert [b["callback_data"] for b in buttons][1] == "trip:v1"
+
+
+def test_callback_journey_detail(conn):
+    journey_setup(conn)
+    c = FakeClient()
+    run(cb("trip:v1"), conn, c)
+    assert [x[0] for x in c.calls] == ["answer", "message"]
+    text = c.calls[1][2]
+    assert "Tramo 1" in text and "Tramo 2" in text and "Parada de 4 min" in text
+    c2 = FakeClient()
+    run(cb("trip:v1"), conn, c2, fetch_tile=grey_tile)
+    assert [x[0] for x in c2.calls] == ["answer", "photo"]
+    assert "Tramo 2" in c2.calls[1][3]
+
+
+def test_callback_missing_journey(conn):
+    journey_setup(conn)
+    c = FakeClient()
+    run(cb("trip:v9"), conn, c)
+    assert c.calls == [("answer", "q1"), ("message", CHAT, "Ese trayecto ya no está disponible.")]
+
+
+def test_callback_legacy_id(conn):
+    drive(conn, NOW - 3_600_000)
+    c = FakeClient()
+    run(cb(f"trip:s1:{NOW - 3_600_000}"), conn, c)
+    assert c.calls[1][0] == "message" and "🕒" in c.calls[1][2]
+
+
+def test_journey_cut_at_page_edge_is_completed(conn):
+    from app.journeys import join
+    from app.trips import range_trips
+
+    t0 = NOW - 10 * 3_600_000
+    for k in range(8):  # 8 trips, oldest first, 1 h apart
+        drive(conn, t0 + k * 3_600_000, 300, north0=k * 5000)
+    trips = range_trips(conn, 0, 10**13)
+    # journey of trips 0-1 (oldest); page of 5 + 2 margin would cut it at trip 1
+    join(conn, trips, trips[0].id, trips[1].id, 1)
+    c = FakeClient()
+    run(msg("/trayectos"), conn, c)
+    assert "2 tramos" not in c.calls[0][2]
+    before = c.calls[1][1]["inline_keyboard"][1][0]["callback_data"]
+    c2 = FakeClient()
+    run(cb(before), conn, c2)
+    assert "2 tramos" in c2.calls[1][2]
