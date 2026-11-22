@@ -3,6 +3,7 @@ package dev.lnk.cartrace.obd
 import dev.lnk.cartrace.contract.DtcRecord
 import dev.lnk.cartrace.contract.EventRecord
 import dev.lnk.cartrace.contract.Events
+import dev.lnk.cartrace.contract.MAX_TRACE_DETAIL
 import dev.lnk.cartrace.contract.ObdRecord
 import dev.lnk.cartrace.contract.Record
 import dev.lnk.cartrace.core.Clocks
@@ -43,6 +44,8 @@ class ObdSource(
     private val protocolPreference: String = "0",
     /** Scan ids already answered; the service shares one set across ObdSource instances. */
     private val handledScans: MutableSet<String> = ConcurrentHashMap.newKeySet(),
+    /** Pauses between init steps; replaced in tests so they do not wait. */
+    private val delayFn: suspend (Long) -> Unit = { delay(it) },
 ) {
     private val _state = MutableStateFlow<ObdState>(ObdState.Connecting)
     val state: StateFlow<ObdState> = _state
@@ -152,19 +155,29 @@ class ObdSource(
             var opened = false
             var error: String
             var transport: ElmTransport? = null
+            var recorder: TraceRecorder? = null
             val parts = mutableListOf<String>()
             attempt++
+            variant = if (protocolPreference == "5") variantFor(sessionProvider().id, attempt) else InitVariant.V1
+            glued = false
+            val firstAttempt = !probedOnce
+            probedOnce = true
             try {
-                transport = transportFactory()
+                val rec = TraceRecorder(transportFactory(), nowMs)
+                recorder = rec
+                transport = rec
+                rec.begin("attempt n=$attempt variant=$variant session_age=${(nowMs() - startMs) / 1000}s")
                 _state.value = ObdState.Connecting
-                transport.open()
+                rec.open()
                 opened = true
-                val protocol = initializeWithStoredProtocol(transport, parts)
+                probe(rec, firstAttempt)
+                val protocol = initializeWithStoredProtocol(rec, parts)
                 connected = true
                 backoffIdx = 0
                 unableCount = 0
                 _state.value = ObdState.Connected(protocol)
-                send(Events.OBD_CONNECTED, "$protocol n=$attempt t=${(nowMs() - startMs) / 1000}s")
+                send(Events.OBD_CONNECTED, withVariant("$protocol n=$attempt t=${(nowMs() - startMs) / 1000}s"))
+                sendTrace(rec, ok = true)
                 attempt = 0
                 readDtcs(transport)
                 poll(transport) // only returns by throwing
@@ -174,6 +187,7 @@ class ObdSource(
             } catch (e: InitFailure) {
                 error = e.message ?: "init failed"
                 reportAttempt(attempt, startMs, parts, transport)
+                sendTrace(recorder, ok = false)
                 if (e.unableToConnect) {
                     if (++unableCount == UNABLE_LIMIT) send(Events.OBD_ERROR, error)
                 } else {
@@ -185,12 +199,19 @@ class ObdSource(
                 if (!connected) {
                     if (!opened) parts += "open: ${e.message ?: e.javaClass.simpleName}"
                     reportAttempt(attempt, startMs, parts, null)
+                    sendTrace(recorder, ok = false)
                 }
                 unableCount = 0
             } finally {
                 transport?.close()
             }
-            if (connected) send(Events.OBD_LOST, error)
+            if (connected) {
+                if (recorder != null) {
+                    val lines = recorder.lastExchanges(LOST_LINES)
+                    send(Events.OBD_TRACE, (listOf("lost") + lines).joinToString("\n"), MAX_TRACE_DETAIL)
+                }
+                send(Events.OBD_LOST, error)
+            }
             val wait = BACKOFF_MS[minOf(backoffIdx++, BACKOFF_MS.lastIndex)]
             _state.value = ObdState.Retrying(error, wait)
             failPendingScans()
@@ -215,7 +236,46 @@ class ObdSource(
         val v = voltage?.let { String.format(Locale.US, "%.1fV", it) } ?: "?"
         val t = (nowMs() - startMs) / 1000
         val detail = (listOf("n=$attempt t=${t}s v=$v") + parts.map { it.take(MAX_PART) }).joinToString(" | ")
-        send(Events.OBD_ATTEMPT_FAILED, detail)
+        send(Events.OBD_ATTEMPT_FAILED, withVariant(detail))
+    }
+
+    private var variant = InitVariant.V1
+    private var glued = false
+    private var probedOnce = false
+
+    /** Appends ` var=Vx`, trimming the rest so the whole detail stays within [MAX_DETAIL]. */
+    private fun withVariant(detail: String): String {
+        val suffix = " var=$variant"
+        return detail.take(MAX_DETAIL - suffix.length) + suffix
+    }
+
+    /** Emits the attempt trace: header plus `result=` (and `glued=1`), then the recorded lines. */
+    private suspend fun sendTrace(recorder: TraceRecorder?, ok: Boolean) {
+        if (recorder == null) return
+        val suffix = " result=${if (ok) "ok" else "fail"}" + if (glued) " glued=1" else ""
+        val text = recorder.render(MAX_TRACE_DETAIL - suffix.length)
+        val nl = text.indexOf('\n').let { if (it < 0) text.length else it }
+        send(Events.OBD_TRACE, text.substring(0, nl) + suffix + text.substring(nl), MAX_TRACE_DETAIL)
+    }
+
+    /** Read-only look at the adapter before ATZ wipes its state. Failures only land in the trace. */
+    private suspend fun probe(t: TraceRecorder, firstAttempt: Boolean) {
+        suspend fun cmd(c: String, timeoutMs: Long): String? = try {
+            t.command(c, timeoutMs)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            t.note("probe $c failed: ${e.message ?: e.javaClass.simpleName}")
+            null
+        }
+        cmd("ATI", PROBE_TIMEOUT)
+        cmd("AT@1", PROBE_TIMEOUT)
+        cmd("ATDP", PROBE_TIMEOUT)
+        val dpn = cmd("ATDPN", PROBE_TIMEOUT)?.let { ElmParser.clean(it).firstOrNull() }.orEmpty()
+        cmd("ATRV", PROBE_TIMEOUT)
+        if (firstAttempt) cmd("ATPPS", PROBE_TIMEOUT)
+        // A fixed protocol (no "A" auto prefix, not 0) may mean a live ECU session left by another app.
+        if (PROTOCOL_NUMBER.matches(dpn)) cmd("0100", PROBE_0100_TIMEOUT)
     }
 
     /**
@@ -250,11 +310,15 @@ class ObdSource(
     }
 
     private suspend fun initialize(t: ElmTransport, protocolNumber: String): String {
-        t.command("ATZ", LONG_TIMEOUT)
-        val setup = mutableListOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP$protocolNumber")
-        // Some PSA ECUs send non-standard key bytes on K-line; replies (clones answer "?") are ignored.
-        if (protocolNumber in K_LINE) setup += "ATKW0"
-        for (c in setup) t.command(c)
+        if (protocolNumber == "5") {
+            runSteps(t, commandsFor(variant))
+        } else {
+            t.command("ATZ", LONG_TIMEOUT)
+            val setup = mutableListOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP$protocolNumber")
+            // Some PSA ECUs send non-standard key bytes on K-line; replies (clones answer "?") are ignored.
+            if (protocolNumber in K_LINE) setup += "ATKW0"
+            for (c in setup) t.command(c)
+        }
         supported = emptySet()
         var next: String? = "0100"
         val found = linkedSetOf<String>()
@@ -264,6 +328,7 @@ class ObdSource(
             // The first request may run the whole protocol search (K-line inits take > 10 s).
             val raw = t.command(next, if (first) FIRST_PID_TIMEOUT else LONG_TIMEOUT)
             raws += ElmParser.clean(raw).joinToString(" ")
+            noteGlued(raw)
             if (ElmParser.isError(raw)) {
                 val unable = ElmParser.isUnableToConnect(raw)
                 val busInit = ElmParser.isBusInitError(raw)
@@ -299,6 +364,33 @@ class ObdSource(
     }
 
     private var supported: Set<String> = emptySet()
+
+    private fun noteGlued(raw: String) {
+        if (ElmParser.hasGluedData(raw)) glued = true
+    }
+
+    private suspend fun runSteps(t: ElmTransport, steps: List<Step>) {
+        for (step in steps) when (step) {
+            is Step.Wait -> delayFn(step.ms)
+            is Step.Cmd -> {
+                val raw = t.command(step.text, step.timeoutMs)
+                if (step.text == "ATFI") {
+                    noteGlued(raw)
+                    if (ElmParser.isError(raw)) {
+                        val unable = ElmParser.isUnableToConnect(raw)
+                        throw InitFailure(
+                            when {
+                                unable -> "UNABLE TO CONNECT"
+                                ElmParser.isBusInitError(raw) -> "BUS INIT ERROR"
+                                else -> "ATFI error: ${ElmParser.clean(raw).joinToString(" ")}"
+                            },
+                            true,
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     /** With [strict], returns false (emitting nothing) if 03/07 answered an ELM error other than NO DATA. */
     private suspend fun readDtcs(t: ElmTransport, strict: Boolean = false): Boolean {
@@ -341,9 +433,9 @@ class ObdSource(
         }
     }
 
-    private suspend fun send(event: String, detail: String?) {
+    private suspend fun send(event: String, detail: String?, max: Int = MAX_DETAIL) {
         val s = sessionProvider()
-        safeEmit(EventRecord(newId(), s.id, s.nextSeq(), 0, event, detail?.take(MAX_DETAIL)))
+        safeEmit(EventRecord(newId(), s.id, s.nextSeq(), 0, event, detail?.take(max)))
     }
 
     /** Emit failures (queue/disk) must neither end the loop nor look like a link loss. */
@@ -368,6 +460,9 @@ class ObdSource(
         const val FIRST_PID_TIMEOUT = 30_000L
         const val MAX_DETAIL = 200
         const val MAX_PART = 60
+        const val PROBE_TIMEOUT = 2_000L
+        const val PROBE_0100_TIMEOUT = 3_000L
+        const val LOST_LINES = 20
         const val VOLTAGE_TIMEOUT = 3_000L
         val K_LINE = setOf("3", "4", "5")
         val PROTOCOL_NUMBER = Regex("[1-9A-C]")
