@@ -7,6 +7,13 @@ from typing import Literal
 
 from app import fmt
 
+# Records that take part in trip/status logic: heartbeats (health) and the
+# diagnostic events (obd_trace, diag) are app-side bookkeeping, not vehicle data.
+NON_DRIVING_SQL = (
+    "type = 'health' OR (type = 'event' AND json_extract(data, '$.event') IN ('obd_trace', 'diag'))"
+)
+DRIVING_SQL = f"NOT ({NON_DRIVING_SQL})"
+
 MAX_ACC_M = 50.0
 MAX_SPEED_MPS = 70.0
 MOVING_WINDOW_MS = 300_000
@@ -108,7 +115,8 @@ def _engine_on(conn: sqlite3.Connection, last_ts: int) -> bool | None:
 
 
 def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
-    last_ts = conn.execute("SELECT MAX(ts) FROM records").fetchone()[0]
+    # health / obd_trace / diag are app bookkeeping: they must not move "last data"
+    last_ts = conn.execute(f"SELECT MAX(ts) FROM records WHERE {DRIVING_SQL}").fetchone()[0]
     if last_ts is None:
         return CarStatus("no_data", None, None, None)
     points = []

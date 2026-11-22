@@ -205,3 +205,68 @@ def test_ingest_omits_stale_and_closed_scans(client):
     scans.close_scan(db, closed, "done", FIXED_NOW)
     r = client.post("/api/v1/ingest", json=_scan_req(), headers=HDR)
     assert r.json()["commands"] == []
+
+
+def test_ingest_accepts_mixed_new_records(client):
+    req = load("valid-mixed")["request"]
+    tmpl = req["records"][0]
+    health = {k: v for k, v in tmpl.items() if k not in ("event", "detail")}
+    recs = [
+        {**tmpl, "id": "aaaaaaa1-113b-4b4e-aba8-bdcff7f6eda2", "seq": 901,
+         "event": "obd_trace", "detail": "x" * 4000},
+        {**tmpl, "id": "aaaaaaa2-113b-4b4e-aba8-bdcff7f6eda2", "seq": 902,
+         "event": "diag", "detail": "gps.no_fix x2 sin fix"},
+        {**health, "id": "aaaaaaa3-113b-4b4e-aba8-bdcff7f6eda2", "seq": 903,
+         "type": "health", "values": {"battery_pct": 80}},
+    ]
+    r = client.post("/api/v1/ingest", json={**req, "records": recs}, headers=HDR)
+    assert r.status_code == 200
+    assert r.json()["accepted"] == 3 and r.json()["rejected"] == []
+    stored = client.app.state.db.execute(
+        "SELECT type, data FROM records WHERE id='aaaaaaa3-113b-4b4e-aba8-bdcff7f6eda2'"
+    ).fetchone()
+    assert stored[0] == "health" and json.loads(stored[1]) == {"values": {"battery_pct": 80}}
+
+
+def _noise(conn, kind, ts, session="s1"):
+    from tests.test_trip_cache import add
+    if kind == "health":
+        add(conn, ts, "health", {"values": {"battery_pct": 50}}, session=session)
+    else:
+        add(conn, ts, "event", {"event": kind, "detail": "x"}, session=session)
+
+
+@pytest.mark.parametrize("kind", ["health", "obd_trace", "diag"])
+def test_health_does_not_affect_trips_alerts_panel(client, kind):
+    from app.alerts import compute_alerts
+    from app.trips import list_trips
+    from conftest import FIXED_NOW
+    from tests.test_panel_api import T1, T2
+    from tests.test_trip_cache import drive
+
+    conn = client.app.state.db
+    # s1: two drives with a 200 s gap (> 120 s trip gap, so two trips); s2: one drive
+    drive(conn, T1 + 100_000, 300, session="s1")
+    drive(conn, T1 + 300_000 + 100_000 + 200_000, 300, session="s1")
+    drive(conn, T2, 600, session="s2")
+
+    def snapshot():
+        trips, more = list_trips(conn)
+        # "stale" intentionally counts heartbeats (the app is alive), so skip it here
+        alerts = [a for a in compute_alerts(conn, trips, FIXED_NOW, "Europe/Madrid")
+                  if a.kind != "stale"]
+        panel = client.get("/api/panel/overview").json()
+        trips_json = client.get("/api/panel/trips").json()
+        return (
+            [(t.id, t.start_ts, t.end_ts) for t in trips], more,
+            repr(alerts), panel, trips_json,
+        )
+
+    before = snapshot()
+    assert len(before[0]) == 3
+    _noise(conn, kind, T1 + 40_000)                 # 60 s before the first GPS point
+    _noise(conn, kind, T1 + 100_000 + 300_000 + 100_000)  # 100 s after the first drive
+    _noise(conn, kind, T1 + 100_000 + 300_000 + 200_000)  # inside the gap between drives
+    _noise(conn, kind, T2 + 600_000 + 100_000, session="s2")  # 100 s after the last point
+    _noise(conn, kind, T1 + 5_000_000, session="s-only")      # noise-only session
+    assert snapshot() == before

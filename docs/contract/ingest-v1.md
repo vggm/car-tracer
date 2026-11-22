@@ -33,7 +33,7 @@ Campos comunes a todo registro:
 | `session_id` | UUID. Nuevo en cada arranque del servicio y en cada vuelta de suspensión |
 | `seq` | Entero ≥ 0, creciente dentro de la sesión |
 | `ts` | Milisegundos UTC. Válido entre 2024-01-01 y ahora + 5 min |
-| `type` | `gps`, `obd`, `dtc` o `event` |
+| `type` | `gps`, `obd`, `dtc`, `event` o `health` |
 
 Campos por tipo:
 
@@ -42,7 +42,8 @@ Campos por tipo:
 | `gps` | `lat` [-90, 90], `lon` [-180, 180], `acc_m` ≥ 0 obligatorios; `speed_mps` ≥ 0, `bearing` [0, 360), `alt_m` opcionales |
 | `obd` | `values`: objeto no vacío, claves `^[a-z0-9_]{1,32}$`, valores numéricos. Claves conocidas: `rpm`, `speed_kmh`, `coolant_c`, `intake_kpa`, `load_pct`, `throttle_pct`, `voltage_v`, `fuel_rate_lph`. Las desconocidas se aceptan y se guardan (compatibilidad hacia delante) |
 | `dtc` | `active` y `pending`: listas de códigos `^[PCBU][0-9A-F]{4}$` (pueden estar vacías) |
-| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `obd_attempt_failed`, `dtc_scan`, `dtc_scan_failed`, `dtc_clear`, `dtc_clear_failed`}; `detail` opcional, ≤ 200 caracteres. `obd_connected`: `detail` puede llevar tras el protocolo ` n=<intento> t=<s>s`. `obd_attempt_failed` (un intento de conexión OBD fallido): `detail = "n=<intento> t=<s>s v=<voltaje> | <parte> | ..."`, con una parte por fase o protocolo probado (`open: <mensaje>` o `<protocolo>: <motivo>`), cada una ≤ 60 caracteres y `v=?` si no se pudo leer. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `obd_error` (el adaptador respondió con error o se perdió el enlace durante la lectura)}. `dtc_clear`: `detail = "<id>"` de la petición de borrado atendida; `dtc_clear_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `engine_running` (motor en marcha), `rejected` (la centralita no aceptó el borrado), `obd_error` (se perdió el enlace durante el borrado)} |
+| `event` | `event` ∈ {`session_start`, `resumed`, `obd_connected`, `obd_lost`, `obd_error`, `obd_attempt_failed`, `dtc_scan`, `dtc_scan_failed`, `dtc_clear`, `dtc_clear_failed`, `obd_trace`, `diag`}; `detail` opcional, ≤ 200 caracteres (≤ 4000 para `obd_trace`, ≤ 500 para `diag`). `obd_trace`: traza en bruto de la conexión OBD (cabecera `attempt n=<n> variant=<Vx> result=<ok\|fail> session_age=<s>s` o `lost`, seguida de líneas `+<ms> > <cmd> \| <respuesta> \| <ms>[ \| ERR <motivo>]`). `diag`: diagnóstico general, `detail = "<componente>.<código> [xN] <texto>"`. Ninguno lleva MAC, coordenadas, URLs con token ni rutas de usuario. `obd_connected`: `detail` puede llevar tras el protocolo ` n=<intento> t=<s>s`. `obd_attempt_failed` (un intento de conexión OBD fallido): `detail = "n=<intento> t=<s>s v=<voltaje> | <parte> | ..."`, con una parte por fase o protocolo probado (`open: <mensaje>` o `<protocolo>: <motivo>`), cada una ≤ 60 caracteres y `v=?` si no se pudo leer. `dtc_scan`: `detail = "<id>"` de la petición atendida; `dtc_scan_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `obd_error` (el adaptador respondió con error o se perdió el enlace durante la lectura)}. `dtc_clear`: `detail = "<id>"` de la petición de borrado atendida; `dtc_clear_failed`: `detail = "<id> <reason>"`, con `reason` ∈ {`obd_not_connected` (sin OBD conectado), `engine_running` (motor en marcha), `rejected` (la centralita no aceptó el borrado), `obd_error` (se perdió el enlace durante el borrado)} |
+| `health` | `values`: objeto no vacío, claves `^[a-z0-9_]{1,32}$`, valores numéricos (latido de salud de la app). Los trayectos y `/donde` ignoran `health`, `obd_trace` y `diag` (no cuentan para inicio/fin/segmentación ni para el último dato o el estado del motor); el aviso «sin datos» sí cuenta `health` (un latido indica que la app está viva) |
 
 `device_id` sigue `^[a-z0-9-]{1,64}$`; `app_version` es texto de ≤ 32 caracteres.
 
@@ -55,6 +56,8 @@ Campos por tipo:
 | `401` | Token ausente o incorrecto | Conserva el lote y muestra el error en la pantalla de estado y en la notificación |
 | `413` | Más de 256 KB | Parte el lote por la mitad y reintenta |
 | `5xx` o sin red | Fallo temporal | Reintenta con espera creciente (30 s → 10 min) |
+
+Los eventos `obd_trace` y `diag` y el tipo `health` (app 0.1.7) requieren el servidor nuevo: uno anterior los rechazaría como desconocidos, así que el servidor se despliega primero. Las apps 0.1.6 siguen funcionando con el servidor nuevo.
 
 Compatibilidad: una app antigua ignora el campo `commands` y los tipos de orden que no conoce. El servidor debe desplegarse antes que una app que envíe los eventos `dtc_scan` / `dtc_scan_failed` / `dtc_clear` / `dtc_clear_failed`, porque un servidor anterior los rechazaría como evento desconocido.
 
