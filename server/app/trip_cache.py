@@ -16,6 +16,7 @@ GroupKey = tuple[tuple[str, int, int], ...]
 class TripCache:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._compute = threading.Lock()  # one cold recompute at a time; others reuse it
         self._groups: dict[GroupKey, list[Trip]] = {}
 
     def all_trips(self, conn: sqlite3.Connection) -> list[Trip]:
@@ -30,16 +31,26 @@ class TripCache:
         ]
         with self._lock:
             cached = self._groups
-        fresh: dict[GroupKey, list[Trip]] = {}
-        for key, group in keyed:
-            if key in cached:
-                fresh[key] = cached[key]
-            else:
-                lo = min(s.min_ts for s in group)
-                hi = max(s.max_ts for s in group)
-                fresh[key] = [dataclasses.replace(t, points=[]) for t in range_trips(conn, lo, hi)]
-        with self._lock:
-            self._groups = fresh
+        if all(key in cached for key, _ in keyed):
+            fresh = {key: cached[key] for key, _ in keyed}
+            if len(fresh) != len(cached):  # drop keys that no longer exist
+                with self._lock:
+                    self._groups = fresh
+        else:
+            with self._compute:
+                with self._lock:
+                    cached = self._groups  # another thread may have filled it meanwhile
+                fresh = {}
+                for key, group in keyed:
+                    if key in cached:
+                        fresh[key] = cached[key]
+                    else:
+                        lo = min(s.min_ts for s in group)
+                        hi = max(s.max_ts for s in group)
+                        fresh[key] = [dataclasses.replace(t, points=[])
+                                      for t in range_trips(conn, lo, hi)]
+                with self._lock:
+                    self._groups = fresh
         trips = sorted((t for ts in fresh.values() for t in ts), key=lambda t: t.start_ts, reverse=True)
         return trips, tuple(sorted(fresh))
 
