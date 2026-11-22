@@ -142,13 +142,16 @@ export async function render(main, params, query) {
       const base = sel === null ? pts : segments[sel].points || [];
       fitTo(base.map((p) => [p[0], p[1]]));
     };
-    // Repinta la tarjeta de cifras con el viaje completo (model) o con un tramo.
+    // Repinta la tarjeta de cifras. stats: model.top, un tramo o las cifras de un rango;
+    // opts.journey: true cuando son las del viaje entero (muestra «Al volante» y «Duración total»).
+    // Tarea 7 la llamará con las cifras de un rango.
     const statsHost = el("div", { class: "stats trip-stats" });
-    const showStats = (src) => {
-      const o = src.top || src;
+    const showStats = (o, opts = {}) => {
       statsHost.replaceChildren(
         stat("Distancia", n1(o.km), "km"),
-        stat("Duración", dur(o.duration_ms)),
+        ...(opts.journey
+          ? [stat("Al volante", dur(o.drive_ms)), stat("Duración total", dur(o.duration_ms))]
+          : [stat("Duración", dur(o.duration_ms))]),
         stat("Media", n0(o.avg_kmh), "km/h"),
         stat("Máxima", n0(o.max_kmh), "km/h"),
         stat("Ralentí", dur(o.idle_ms)),
@@ -216,7 +219,7 @@ export async function render(main, params, query) {
       });
       paintLines();
       focus(null);
-      showStats(i === null ? model : segments[i]);
+      showStats(i === null ? model.top : segments[i], { journey: i === null && isJourney });
       applyRange();
       history.replaceState(null, "", `#/viaje/${encodeURIComponent(id)}${i === null ? "" : `?tramo=${i + 1}`}`);
     };
@@ -227,7 +230,7 @@ export async function render(main, params, query) {
       main.append(el("div", { class: "seg-chips", role: "group", "aria-label": "Tramos del viaje" }, chipEls));
     }
 
-    showStats(model);
+    showStats(model.top, { journey: isJourney });
     main.append(card(null, statsHost));
     if (chipEls.length) {
       const q = parseInt(query && query.get("tramo"), 10);
