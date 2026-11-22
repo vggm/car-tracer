@@ -313,3 +313,20 @@ def test_parse_trip_ts():
     assert parse_trip_ts("v12") is None
     assert parse_trip_ts("") is None
     assert parse_trip_ts("s:") is None
+    assert parse_trip_ts("9" * 18) == int("9" * 18)
+    assert parse_trip_ts("9" * 19) is None
+    assert parse_trip_ts("1" * 5000) is None
+
+
+def test_before_ts_inside_merged_group(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 300, session="old")
+    drive(conn, 1_000_000, 600, session="a")
+    drive(conn, 1_637_000, 600, session="b", north0=6000)
+    inside = 1_700_000
+    trips, more = list_trips(conn, before_ts=inside, limit=1)
+    assert [t.start_ts for t in trips] == [1_000_000] and more is True
+    older, more = list_trips(conn, before_ts=1_000_000, limit=1)
+    assert [t.start_ts for t in older] == [0] and more is False
+    only, more = list_trips(conn, before_ts=inside, limit=5)
+    assert [t.start_ts for t in only] == [1_000_000, 0] and more is False

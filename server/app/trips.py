@@ -193,7 +193,7 @@ def range_trips(conn: sqlite3.Connection, min_ts: int, max_ts: int) -> list[Trip
 def parse_trip_ts(trip_id: str) -> int | None:
     """New ids are str(start_ts); legacy ones are '<session>:<ts>'."""
     ts = trip_id.rpartition(":")[2]
-    return int(ts) if ts.isascii() and ts.isdigit() else None
+    return int(ts) if ts.isascii() and ts.isdigit() and len(ts) <= 18 else None
 
 
 def list_trips(
