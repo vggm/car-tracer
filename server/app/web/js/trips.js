@@ -17,7 +17,7 @@ function row(t) {
 
 export async function render(main, params, query) {
   const month = params[0] || thisMonth();
-  document.title = "Trayectos · car-trace";
+  document.title = "Trayectos · Car Trace";
   const dia = query && query.get("dia");
   const head = el("div", { class: "trips-head" },
     el("h1", { class: "page-title" }, "Trayectos"),
