@@ -5,6 +5,7 @@ import dataclasses
 import sqlite3
 import threading
 
+from app.location import DRIVING_SQL
 from app.trips import Trip, session_trips
 
 
@@ -23,7 +24,7 @@ class TripCache:
         keys = {
             sid: (count, max_ts)
             for sid, count, max_ts in conn.execute(
-                "SELECT session_id, count(*), max(ts) FROM records GROUP BY session_id"
+                f"SELECT session_id, count(*), max(ts) FROM records WHERE {DRIVING_SQL} GROUP BY session_id"
             )
         }
         with self._lock:

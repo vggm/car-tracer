@@ -63,4 +63,18 @@ class RecordsTest {
         assertEquals("abc", r.rejected[0].id)
         assertTrue(r.rejected[0].error.isNotEmpty())
     }
+
+    @Test
+    fun healthRecordSerializesWithTypeAndValues() {
+        val rec = HealthRecord("i", "s", 3, 4, mapOf("batt_v" to 12.5))
+        val json = ContractJson.encodeToString<Record>(rec)
+        val obj = ContractJson.parseToJsonElement(json).jsonObject
+        assertEquals("health", (obj.getValue("type") as JsonPrimitive).content)
+        assertEquals(12.5, (obj.getValue("values") as JsonObject).getValue("batt_v").let { (it as JsonPrimitive).doubleOrNull })
+        assertEquals(rec, ContractJson.decodeFromString<Record>(json))
+        assertEquals("obd_trace", Events.OBD_TRACE)
+        assertEquals("diag", Events.DIAG)
+        assertEquals(4000, MAX_TRACE_DETAIL)
+        assertEquals(500, MAX_DIAG_DETAIL)
+    }
 }

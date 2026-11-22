@@ -95,4 +95,27 @@ class ElmParserTest {
         assertFalse(ElmParser.isUnableToConnect("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
         assertFalse(ElmParser.isError("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
     }
+
+    @Test fun gluedDataAfterBusInitOkIsKept() {
+        assertTrue(ElmParser.supportedPids(listOf("BUS INIT: ...OK41 00 BE 3E B8 13\r\r>")).isNotEmpty())
+        assertEquals(listOf("4100BE3EB813"), ElmParser.clean("BUS INIT: ...OK41 00 BE 3E B8 13\r\r>"))
+    }
+
+    @Test fun fastInitOkWithoutDotsIsNoise() {
+        assertEquals(listOf("4100BE3EB813"), ElmParser.clean("BUS INIT: OK\r41 00 BE 3E B8 13\r\r>"))
+    }
+
+    @Test fun hasGluedDataDetectsGluedLines() {
+        assertTrue(ElmParser.hasGluedData("BUS INIT: ...OK41 00 BE 3E B8 13\r\r>"))
+        assertFalse(ElmParser.hasGluedData("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
+        assertFalse(ElmParser.hasGluedData("BUS INIT: OK\r41 00\r\r>"))
+    }
+
+    @Test fun gluedDataAfterDotlessFastInitIsKept() {
+        val raw = "BUS INIT: OK41 00 BE 3E B8 13\r\r>"
+        assertEquals(listOf("4100BE3EB813"), ElmParser.clean(raw))
+        assertTrue(ElmParser.supportedPids(listOf(raw)).isNotEmpty())
+        assertTrue(ElmParser.hasGluedData(raw))
+        assertFalse(ElmParser.isError(raw))
+    }
 }
