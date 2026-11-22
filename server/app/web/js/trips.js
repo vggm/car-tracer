@@ -38,6 +38,7 @@ function gapLine(newer, older, refresh) {
       link.removeAttribute("aria-disabled");
       line.querySelector(".trip-join-err")?.remove();
       line.append(el("span", { class: "trip-join-err", role: "alert" }, " No se pudo unir"));
+      if (e && e.status === 422) refresh(); // the trip ids changed: the list is stale
     }
   });
   return line;
@@ -66,7 +67,7 @@ export async function render(main, params, query) {
 
   const refresh = () => {
     const y = window.scrollY;
-    load(body, fetchTrips, paint).then(() => window.scrollTo(0, y));
+    load(body, fetchTrips, paint).then(() => body.isConnected && window.scrollTo(0, y));
   };
   const fetchTrips = () => getJSON(`/api/panel/trips?month=${encodeURIComponent(month)}`);
   const paint = (data) => {

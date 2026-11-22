@@ -55,7 +55,7 @@ def has_route(points: list[GpsPoint]) -> bool:
 def _engine_block(trip: Item, what: str) -> str:
     if not trip.has_obd:
         return f"⚙️ Sin datos del motor en este {what}"
-    pct = trip.idle_ms / trip.duration_ms * 100 if trip.duration_ms > 0 else 0
+    pct = trip.idle_ms / trip.drive_ms * 100 if trip.drive_ms > 0 else 0
     motor = [
         "⚙️ <b>Motor</b>",
         f"• Ralentí: {fmt.num(round(trip.idle_ms / 60_000))} min ({fmt.num(pct)} %)",

@@ -72,12 +72,12 @@ def trips(request: Request, month: str | None = None) -> dict:
     year, mon = _month(request, month)
     items = journeys_mod.group_items(
         state.trip_cache.all_trips(db), journeys_mod.load_journeys(db))
-    # group_items is newest first; gaps look at the next (older) item of the whole list
-    gapped = stats.with_gaps(items, tz)
     key = _month_str(year, mon)
+    # group_items is newest first; gaps look at the next (older) item of the whole list,
+    # but only the requested month is summarised
     return {
         "month": key,
-        "trips": [g for g, i in zip(gapped, items) if stats.month_key(i.start_ts, tz) == key],
+        "trips": stats.with_gaps(items, tz, keep=lambda i: stats.month_key(i.start_ts, tz) == key),
     }
 
 
@@ -123,7 +123,7 @@ class JoinBody(BaseModel):
 def join_journey(request: Request, body: JoinBody) -> dict:
     state = request.app.state
     trips_ = state.trip_cache.all_trips(state.readers.get())
-    with contextlib.closing(db_mod.connect(state.settings.db_path)) as conn:
+    with contextlib.closing(db_mod.connect_writer(state.settings.db_path)) as conn:
         try:
             n = journeys_mod.join(conn, trips_, body.trip_ids[0], body.trip_ids[1], state.clock())
         except ValueError as e:
@@ -136,7 +136,7 @@ def join_journey(request: Request, body: JoinBody) -> dict:
 def separate_journey(request: Request, jid: str) -> Response:
     state = request.app.state
     n = journeys_mod.parse_journey_id(jid)
-    with contextlib.closing(db_mod.connect(state.settings.db_path)) as conn:
+    with contextlib.closing(db_mod.connect_writer(state.settings.db_path)) as conn:
         removed = n is not None and journeys_mod.separate(conn, n)
     if not removed:
         raise HTTPException(status_code=404, detail="journey not found")

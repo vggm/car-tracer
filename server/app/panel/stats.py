@@ -149,10 +149,13 @@ def item_summary(item: Item) -> dict:
     return {"kind": "trip", **trip_summary(item)}
 
 
-def with_gaps(items_newest_first: list[Item], tz: str) -> list[dict]:
+def with_gaps(items_newest_first: list[Item], tz: str, keep=None) -> list[dict]:
+    """Summaries with gap_before_ms; gaps use the whole list, `keep(item)` limits what is summarised."""
     out = []
     items = items_newest_first
     for i, item in enumerate(items):
+        if keep is not None and not keep(item):
+            continue
         gap = None
         if i + 1 < len(items):
             prev = items[i + 1]
