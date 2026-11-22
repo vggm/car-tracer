@@ -37,6 +37,14 @@ class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Lo
         val (head, all, headSize, droppedNow) = synchronized(lock) {
             Snapshot(header, headLines + tailLines, headLines.size, dropped)
         }
+        return renderParts(head, all, headSize, droppedNow, maxChars)
+    }
+
+    /** [customHeader] plus the last [n] lines, cut in the middle (last line kept) when over [maxChars]. */
+    fun renderLast(customHeader: String, n: Int, maxChars: Int = MAX_TRACE_DETAIL): String =
+        renderParts(customHeader, lastExchanges(n), 0, 0, maxChars)
+
+    private fun renderParts(head: String, all: List<String>, headSize: Int, droppedNow: Int, maxChars: Int): String {
         if (droppedNow == 0) {
             val full = (listOf(head) + all).joinToString("\n")
             if (full.length <= maxChars) return full

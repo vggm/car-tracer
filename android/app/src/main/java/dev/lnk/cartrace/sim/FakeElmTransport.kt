@@ -14,7 +14,11 @@ class FakeElmTransport(private val nowMs: () -> Long = System::currentTimeMillis
     override suspend fun command(cmd: String, timeoutMs: Long): String {
         val t = (nowMs() - t0) / 1000.0
         val body = when (cmd.uppercase().replace(" ", "")) {
-            "ATZ" -> "ELM327 v1.5"
+            "ATZ", "ATWS", "ATI" -> "ELM327 v1.5"
+            "AT@1" -> "OBDII to RS232 Interpreter"
+            "ATDP" -> "AUTO, ISO 15765-4 (CAN 11/500)"
+            "ATPPS" -> "00:FF F:68"
+            "ATFI" -> "BUS INIT: OK"
             "ATDPN" -> "A6"
             "ATRV" -> "%.1fV".format(Locale.US, 13.8 - 0.4 * (0.5 + 0.5 * sin(t / 120 * 2 * PI)))
             "0100" -> "41 00 18 38 80 01"

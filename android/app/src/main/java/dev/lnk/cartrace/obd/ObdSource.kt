@@ -46,6 +46,8 @@ class ObdSource(
     private val handledScans: MutableSet<String> = ConcurrentHashMap.newKeySet(),
     /** Pauses between init steps; replaced in tests so they do not wait. */
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
+    /** ATPPS (long output) is probed once per service start: the service shares this flag. */
+    private val probeOnce: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
 ) {
     private val _state = MutableStateFlow<ObdState>(ObdState.Connecting)
     val state: StateFlow<ObdState> = _state
@@ -160,17 +162,23 @@ class ObdSource(
             attempt++
             variant = if (protocolPreference == "5") variantFor(sessionProvider().id, attempt) else InitVariant.V1
             glued = false
-            val firstAttempt = !probedOnce
-            probedOnce = true
             try {
                 val rec = TraceRecorder(transportFactory(), nowMs)
                 recorder = rec
                 transport = rec
-                rec.begin("attempt n=$attempt variant=$variant session_age=${(nowMs() - startMs) / 1000}s")
+                attemptAgeS = (nowMs() - startMs) / 1000
+                attemptN = attempt
+                rec.begin("attempt")
                 _state.value = ObdState.Connecting
                 rec.open()
                 opened = true
-                probe(rec, firstAttempt)
+                if (!probe(rec)) {
+                    // A timed-out probe command leaves the real socket closed: start over on a fresh one.
+                    opened = false
+                    rec.close()
+                    rec.open()
+                    opened = true
+                }
                 val protocol = initializeWithStoredProtocol(rec, parts)
                 connected = true
                 backoffIdx = 0
@@ -207,8 +215,7 @@ class ObdSource(
             }
             if (connected) {
                 if (recorder != null) {
-                    val lines = recorder.lastExchanges(LOST_LINES)
-                    send(Events.OBD_TRACE, (listOf("lost") + lines).joinToString("\n"), MAX_TRACE_DETAIL)
+                    send(Events.OBD_TRACE, recorder.renderLast("lost", LOST_LINES), MAX_TRACE_DETAIL)
                 }
                 send(Events.OBD_LOST, error)
             }
@@ -241,7 +248,8 @@ class ObdSource(
 
     private var variant = InitVariant.V1
     private var glued = false
-    private var probedOnce = false
+    private var attemptAgeS = 0L
+    private var attemptN = 0
 
     /** Appends ` var=Vx`, trimming the rest so the whole detail stays within [MAX_DETAIL]. */
     private fun withVariant(detail: String): String {
@@ -252,30 +260,38 @@ class ObdSource(
     /** Emits the attempt trace: header plus `result=` (and `glued=1`), then the recorded lines. */
     private suspend fun sendTrace(recorder: TraceRecorder?, ok: Boolean) {
         if (recorder == null) return
-        val suffix = " result=${if (ok) "ok" else "fail"}" + if (glued) " glued=1" else ""
-        val text = recorder.render(MAX_TRACE_DETAIL - suffix.length)
+        val header = "attempt n=$attemptN variant=$variant result=${if (ok) "ok" else "fail"} session_age=${attemptAgeS}s" +
+            if (glued) " glued=1" else ""
+        val text = recorder.render(MAX_TRACE_DETAIL - 64)
         val nl = text.indexOf('\n').let { if (it < 0) text.length else it }
-        send(Events.OBD_TRACE, text.substring(0, nl) + suffix + text.substring(nl), MAX_TRACE_DETAIL)
+        send(Events.OBD_TRACE, header + text.substring(nl), MAX_TRACE_DETAIL)
     }
 
-    /** Read-only look at the adapter before ATZ wipes its state. Failures only land in the trace. */
-    private suspend fun probe(t: TraceRecorder, firstAttempt: Boolean) {
-        suspend fun cmd(c: String, timeoutMs: Long): String? = try {
+    /**
+     * Read-only look at the adapter before ATZ wipes its state. Returns false when a command failed:
+     * the probe stops (the socket may be dead) and the caller reopens it.
+     */
+    private suspend fun probe(t: TraceRecorder): Boolean {
+        suspend fun cmd(c: String, timeoutMs: Long): String =
             t.command(c, timeoutMs)
+        try {
+            cmd("ATI", PROBE_TIMEOUT)
+            cmd("AT@1", PROBE_TIMEOUT)
+            cmd("ATDP", PROBE_TIMEOUT)
+            // The probe runs before ATE0: ignore an echoed command line.
+            val dpn = ElmParser.clean(cmd("ATDPN", PROBE_TIMEOUT)).lastOrNull { it != "ATDPN" }.orEmpty()
+            cmd("ATRV", PROBE_TIMEOUT)
+            if (probeOnce.compareAndSet(false, true)) cmd("ATPPS", PROBE_TIMEOUT)
+            // A determined protocol (anything but 0 / A0) may mean a live ECU session left by another app.
+            val p = dpn.removePrefix("A")
+            if (dpn.isNotEmpty() && p != "0" && PROTOCOL_NUMBER.matches(p)) cmd("0100", PROBE_0100_TIMEOUT)
+            return true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            t.note("probe $c failed: ${e.message ?: e.javaClass.simpleName}")
-            null
+            t.note("probe failed: ${e.message ?: e.javaClass.simpleName}; reopening")
+            return false
         }
-        cmd("ATI", PROBE_TIMEOUT)
-        cmd("AT@1", PROBE_TIMEOUT)
-        cmd("ATDP", PROBE_TIMEOUT)
-        val dpn = cmd("ATDPN", PROBE_TIMEOUT)?.let { ElmParser.clean(it).firstOrNull() }.orEmpty()
-        cmd("ATRV", PROBE_TIMEOUT)
-        if (firstAttempt) cmd("ATPPS", PROBE_TIMEOUT)
-        // A fixed protocol (no "A" auto prefix, not 0) may mean a live ECU session left by another app.
-        if (PROTOCOL_NUMBER.matches(dpn)) cmd("0100", PROBE_0100_TIMEOUT)
     }
 
     /**
@@ -384,7 +400,7 @@ class ObdSource(
                                 ElmParser.isBusInitError(raw) -> "BUS INIT ERROR"
                                 else -> "ATFI error: ${ElmParser.clean(raw).joinToString(" ")}"
                             },
-                            true,
+                            unable || ElmParser.isBusInitError(raw),
                         )
                     }
                 }
