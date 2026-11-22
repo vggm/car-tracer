@@ -1,4 +1,6 @@
 import { start } from "./router.js";
+import { initTheme } from "./theme.js";
+initTheme();
 import { getAlerts } from "./api.js";
 import * as overview from "./overview.js";
 import * as trips from "./trips.js";

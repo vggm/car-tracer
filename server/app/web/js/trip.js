@@ -1,5 +1,7 @@
 import { ApiError, getJSON } from "./api.js";
 import { el, card, stat, emptyState, load } from "./ui.js";
+import { onThemeChange } from "./theme.js";
+import { addBasemap } from "./basemap.js";
 import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 
 const nil = (x) => x === null || x === undefined;
@@ -31,9 +33,8 @@ function notFound() {
 export async function render(main, params) {
   const id = params[0];
   document.title = "Trayecto · Car Trace";
-  let map = null, charts = [], ro = null, recolor = null, rebuild = null;
-  const mq = window.matchMedia("(prefers-color-scheme: dark)");
-  const onTheme = () => { if (recolor) recolor(); if (rebuild) rebuild(); };
+  let map = null, charts = [], ro = null, recolor = null, rebuild = null, basemap = null, offTheme = null;
+  const onTheme = () => { if (recolor) recolor(); if (basemap) basemap.retheme(); if (rebuild) rebuild(); };
 
   const destroyCharts = () => {
     for (const u of charts) u.destroy();
@@ -42,8 +43,11 @@ export async function render(main, params) {
   const cleanup = () => {
     if (ro) ro.disconnect();
     ro = null;
-    mq.removeEventListener("change", onTheme);
+    if (offTheme) offTheme();
+    offTheme = null;
     destroyCharts();
+    if (basemap) basemap.destroy();
+    basemap = null;
     if (map) map.remove();
     map = null;
   };
@@ -62,7 +66,7 @@ export async function render(main, params) {
       main.append(notFound());
       return;
     }
-    mq.addEventListener("change", onTheme);
+    offTheme = onThemeChange(onTheme);
     main.append(el("div", { class: "trip-head" },
       el("a", { class: "back", href: `#/trayectos/${monthOf(t.start_ts)}` }, "‹ Trayectos"),
       el("h1", { class: "page-title" }, dayLong(t.start_ts)),
@@ -73,8 +77,11 @@ export async function render(main, params) {
     if (pts.length) {
       const mapEl = el("div", { class: "trip-map", role: "img", "aria-label": "Mapa del trayecto" });
       main.append(el("div", { class: "card map-card" }, mapEl));
-      map = L.map(mapEl, { zoomControl: true, attributionControl: true });
-      L.tileLayer("/tiles/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      map = L.map(mapEl, { zoomControl: true, attributionControl: true, maxZoom: 19 });
+      const thisMap = map;
+      addBasemap(thisMap, () => map === thisMap).then((b) => {
+        if (map === thisMap) basemap = b; else b.destroy();
+      });
       const ll = pts.map((p) => [p[0], p[1]]);
       const line = L.polyline(ll, { color: cssVar("--accent"), weight: 4, opacity: 0.95 }).addTo(map);
       const dot = (p, color) => L.circleMarker([p[0], p[1]], {
