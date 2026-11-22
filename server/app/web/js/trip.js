@@ -81,7 +81,7 @@ export async function render(main, params) {
       const thisMap = map;
       addBasemap(thisMap, () => map === thisMap).then((b) => {
         if (map === thisMap) basemap = b; else b.destroy();
-      });
+      }).catch(console.error);
       const ll = pts.map((p) => [p[0], p[1]]);
       const line = L.polyline(ll, { color: cssVar("--accent"), weight: 4, opacity: 0.95 }).addTo(map);
       const dot = (p, color) => L.circleMarker([p[0], p[1]], {

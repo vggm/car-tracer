@@ -1,13 +1,13 @@
 // Tema claro/oscuro: data-theme en <html> (si hay elección guardada) o sistema.
 const KEY = "ct.theme";
-const mq = window.matchMedia("(prefers-color-scheme: dark)");
+const mq = window.matchMedia("(prefers-color-scheme: light)");
 const root = document.documentElement;
 
 const stored = () => {
   try { const v = localStorage.getItem(KEY); return v === "light" || v === "dark" ? v : null; } catch { return null; }
 };
 
-export const isDark = () => (root.dataset.theme ? root.dataset.theme === "dark" : mq.matches);
+export const isDark = () => (root.dataset.theme ? root.dataset.theme === "dark" : !mq.matches);
 
 function syncButton() {
   const btn = document.getElementById("theme-toggle");
