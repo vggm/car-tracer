@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
-from app.db import connect
+from app.db import ThreadLocalConnections, connect
 from app.funnel_guard import FunnelGuardMiddleware
 from app.ingest import router
 from app.panel.api import router as panel_router
@@ -33,6 +33,7 @@ def create_app(
     app.state.settings = settings
     app.state.clock = clock
     app.state.db = connect(settings.db_path)
+    app.state.readers = ThreadLocalConnections(settings.db_path)
     app.add_middleware(FunnelGuardMiddleware)
     app.state.trip_cache = TripCache()
     app.include_router(router)

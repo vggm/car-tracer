@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 
 from app.contract import Record
 
@@ -60,6 +61,20 @@ def connect(path: str) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn
+
+
+class ThreadLocalConnections:
+    """One lazily opened connection per thread (for concurrent panel reads)."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._local = threading.local()
+
+    def get(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._local.conn = connect(self._path)
+        return conn
 
 
 def insert_records(

@@ -27,8 +27,8 @@ def overview(request: Request, month: str | None = None) -> dict:
     state = request.app.state
     tz = state.settings.tz
     year, mon = _month(request, month)
-    trips = state.trip_cache.all_trips(state.db)
-    alerts = compute_alerts(state.db, trips, state.clock(), tz)
+    trips = state.trip_cache.all_trips(state.readers.get())
+    alerts = compute_alerts(state.readers.get(), trips, state.clock(), tz)
     return {
         "month": _month_str(year, mon),
         "totals": stats.totals(stats.trips_in_month(trips, year, mon, tz)),
@@ -43,7 +43,7 @@ def trips(request: Request, month: str | None = None) -> dict:
     state = request.app.state
     year, mon = _month(request, month)
     in_month = stats.trips_in_month(
-        state.trip_cache.all_trips(state.db), year, mon, state.settings.tz)
+        state.trip_cache.all_trips(state.readers.get()), year, mon, state.settings.tz)
     in_month = sorted(in_month, key=lambda t: t.start_ts, reverse=True)
     return {
         "month": _month_str(year, mon),
@@ -54,21 +54,21 @@ def trips(request: Request, month: str | None = None) -> dict:
 @router.get("/trips/{trip_id}")
 def trip(request: Request, trip_id: str) -> dict:
     state = request.app.state
-    found = state.trip_cache.get(state.db, trip_id)
+    found = state.trip_cache.get(state.readers.get(), trip_id)
     if found is None:
         raise HTTPException(status_code=404, detail="trip not found")
-    return stats.trip_detail(state.db, found)
+    return stats.trip_detail(state.readers.get(), found)
 
 
 @router.get("/dtc")
 def dtc(request: Request) -> dict:
-    db = request.app.state.db
+    db = request.app.state.readers.get()
     return {"current": stats.dtc_state(db), "history": stats.dtc_history(db)}
 
 
 @router.get("/alerts")
 def alerts(request: Request) -> dict:
     state = request.app.state
-    trips_ = state.trip_cache.all_trips(state.db)
-    found = compute_alerts(state.db, trips_, state.clock(), state.settings.tz)
+    trips_ = state.trip_cache.all_trips(state.readers.get())
+    found = compute_alerts(state.readers.get(), trips_, state.clock(), state.settings.tz)
     return {"alerts": [asdict(a) for a in found]}

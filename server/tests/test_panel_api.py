@@ -72,3 +72,25 @@ def test_index_and_static_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     assert client.get("/static/index.html").status_code == 200
+
+
+class _Boom:
+    def __getattr__(self, name):
+        raise AssertionError(f"panel used app.state.db ({name})")
+
+
+def test_panel_does_not_use_shared_ingest_connection(client):
+    _seed(client)
+    client.app.state.db = _Boom()
+    for url in ["/api/panel/overview", "/api/panel/dtc",
+                "/api/panel/alerts", "/api/panel/trips"]:
+        assert client.get(url).status_code == 200, url
+
+
+def test_panel_concurrent_requests_all_ok(client):
+    from concurrent.futures import ThreadPoolExecutor
+    _seed(client)
+    urls = ["/api/panel/alerts", "/api/panel/dtc", "/api/panel/overview"] * 20
+    with ThreadPoolExecutor(8) as ex:
+        codes = list(ex.map(lambda u: client.get(u).status_code, urls))
+    assert codes == [200] * 60
