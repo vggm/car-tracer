@@ -1,4 +1,4 @@
-const TZ = "Europe/Madrid";
+export const TZ = "Europe/Madrid";
 const LOC = "es-ES";
 const num1 = new Intl.NumberFormat(LOC, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const num0 = new Intl.NumberFormat(LOC, { maximumFractionDigits: 0 });
@@ -10,11 +10,24 @@ const fDate = f({ day: "numeric", month: "short", year: "numeric" });
 const fMonthLong = new Intl.DateTimeFormat(LOC, { timeZone: "UTC", month: "long", year: "numeric" });
 const fMonth = new Intl.DateTimeFormat(LOC, { timeZone: "UTC", month: "long" });
 const fParts = f({ year: "numeric", month: "2-digit" });
+const fIso = new Intl.DateTimeFormat("sv-SE", { timeZone: TZ });
 
 const nil = (x) => x === null || x === undefined || Number.isNaN(x);
 const ym = (m) => {
   const [y, mo] = m.split("-").map(Number);
   return new Date(Date.UTC(y, mo - 1, 1));
+};
+
+export const n1 = (x) => (nil(x) ? "—" : num1.format(x));
+export const n0 = (x) => (nil(x) ? "—" : num0.format(Math.round(x)));
+// "YYYY-MM-DD" local (Europe/Madrid) de un ms UTC.
+export const localDate = (ts) => fIso.format(ts);
+export const monthOf = (ts) => localDate(ts).slice(0, 7);
+export const today = () => localDate(Date.now());
+// "20 sep": mismo criterio de abreviar que las etiquetas del mapa de calor (3 letras).
+export const dayMonth = (iso) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d} ${fMonth.format(new Date(Date.UTC(y, m - 1, 1))).slice(0, 3)}`;
 };
 
 export const km = (x) => (nil(x) ? "—" : `${num1.format(x)} km`);

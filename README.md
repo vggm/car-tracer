@@ -39,7 +39,7 @@ Tablet Junsun (Android)                       Servidor de casa (Podman)
 | Ruta | Contenido |
 | --- | --- |
 | `android/` | App Android en Kotlin con Jetpack Compose, Room, OkHttp y coroutines. minSdk 33, targetSdk 34 |
-| `server/` | API de ingesta, panel web (API JSON y web estática en `app/panel/`) y bot de Telegram en Python 3.12 (FastAPI, pydantic, httpx), gestionado con uv |
+| `server/` | API de ingesta, panel web (API JSON en `app/panel/`, web estática en `app/web/`) y bot de Telegram en Python 3.12 (FastAPI, pydantic, httpx), gestionado con uv |
 | `docker-compose.yml` | Despliegue de los dos contenedores (`car-trace-api` y `car-trace-bot`) |
 | `tools/simulate_drive.py` | Simula un trayecto y lo envía al servidor (solo stdlib) |
 | `tools/seed_demo_db.py` | Crea una base de datos SQLite con datos de demostración para probar el panel |
