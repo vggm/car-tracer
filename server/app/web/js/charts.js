@@ -4,7 +4,8 @@ import { km, dur, monthLong, monthName } from "./fmt.js";
 const NS = "http://www.w3.org/2000/svg";
 const num0 = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
 const fDay = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", day: "numeric", month: "short" });
-const fMon = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", month: "short" });
+const fMon = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", month: "long" });
+const abbr = (name) => name.slice(0, 3);
 const DAY = 86400000;
 
 function s(tag, attrs = {}, ...children) {
@@ -48,6 +49,7 @@ export function heatmap(days, { endDate, today, onDay }) {
   const th = thresholds(days);
   const end = utc(endDate);
   const dow = (t) => (new Date(t).getUTCDay() + 6) % 7;
+  const startDate = iso(end - 364 * DAY);
   const first = end - dow(end) * DAY - (COLS - 1) * 7 * DAY;
   const w = LEFT + COLS * STEP - GAP, h = TOP + 7 * STEP - GAP;
   const total = days.reduce((a, d) => a + d.km, 0);
@@ -68,7 +70,7 @@ export function heatmap(days, { endDate, today, onDay }) {
     const mon = new Date(monday).getUTCMonth();
     if (mon !== prevMonth) {
       if (c - lastLabel >= 3) {
-        svg.append(s("text", { class: "hm-label", x: LEFT + c * STEP, y: 10 }, noDot(fMon.format(monday))));
+        svg.append(s("text", { class: "hm-label", x: LEFT + c * STEP, y: 10 }, abbr(fMon.format(monday))));
         lastLabel = c;
       }
       prevMonth = mon;
@@ -76,7 +78,7 @@ export function heatmap(days, { endDate, today, onDay }) {
     for (let r = 0; r < 7; r++) {
       const t = monday + r * DAY;
       const date = iso(t);
-      const future = date > today;
+      const future = date > today || date > endDate || date < startDate;
       const d = byDate.get(date);
       const k = d ? d.km : 0;
       const label = noDot(fDay.format(t));
@@ -86,9 +88,10 @@ export function heatmap(days, { endDate, today, onDay }) {
       const rect = s("rect", {
         class: future ? "hm-cell hm-future" : `hm-cell l${level(k, th)}`,
         x: LEFT + c * STEP, y: TOP + r * STEP, width: CELL, height: CELL, rx: 2,
-        role: "img", "aria-label": text,
+        role: future ? null : "img", "aria-label": future ? null : text,
+        "aria-hidden": future ? "true" : null,
         tabindex: !future && d && d.trips > 0 ? "0" : null,
-      }, title(text));
+      }, future ? null : title(text));
       if (!future) onActivate(rect, () => onDay && onDay(date));
       svg.append(rect);
     }
@@ -122,7 +125,7 @@ export function monthBars(months, { selected, onSelect }) {
         s("rect", { class: "mb-fill", x, y: base - bh, width: bw, height: bh, rx: 3 }),
         s("text", { class: "mb-val", x: x + bw / 2, y: base - bh - 5, "text-anchor": "middle" }, m.km > 0 ? num0.format(m.km) : ""),
         s("text", { class: "mb-x", x: x + bw / 2, y: H - 6, "text-anchor": "middle" },
-          wide.matches ? noDot(name.slice(0, 3)) : name.charAt(0).toUpperCase()));
+          wide.matches ? abbr(name) : name.charAt(0).toUpperCase()));
       onActivate(g, () => onSelect && onSelect(m.month));
       svg.append(g);
     });
@@ -130,10 +133,12 @@ export function monthBars(months, { selected, onSelect }) {
 
   build(336);
   if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(() => {
+    const ro = new ResizeObserver(() => {
       const w = Math.round(svg.getBoundingClientRect().width);
       if (w > 0 && w !== built) build(w);
-    }).observe(svg);
+    });
+    ro.observe(svg);
+    svg.dispose = () => ro.disconnect();
   }
   return svg;
 }

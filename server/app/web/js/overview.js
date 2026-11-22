@@ -15,6 +15,7 @@ function legend() {
 export async function render(main, params) {
   const month = params[0] || thisMonth();
   document.title = "Resumen · car-trace";
+  let dispose;
   await load(main, () => getJSON(`/api/panel/overview?month=${encodeURIComponent(month)}`), (data) => {
     const [y, m] = month.split("-").map(Number);
     const endDate = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
@@ -26,6 +27,9 @@ export async function render(main, params) {
         onDay: (d) => { location.hash = `#/trayectos/${d.slice(0, 7)}?dia=${d.slice(8)}`; },
       }));
 
+    const bars = monthBars(data.months, { selected: month, onSelect: (mo) => { location.hash = `#/resumen/${mo}`; } });
+    dispose = bars.dispose;
+
     main.append(
       el("h1", { class: "page-title" }, "Resumen"),
       monthPicker(month, (x) => `#/resumen/${x}`),
@@ -36,12 +40,10 @@ export async function render(main, params) {
           stat("Al volante", dur(t.drive_ms ?? 0)),
           stat("Velocidad máx.", kmh(t.max_kmh ?? 0).replace(" km/h", ""), "km/h")),
         t.trips ? null : emptyState(`Sin trayectos en ${monthName(month)}`)),
-      el("div", { class: "grid" },
-        card("Últimos 12 meses", scroller, legend()),
-        card("Kilómetros por mes",
-          monthBars(data.months, { selected: month, onSelect: (mo) => { location.hash = `#/resumen/${mo}`; } }))));
-    for (const c of main.querySelector(".grid").children) c.classList.add("span-2");
+      card("Últimos 12 meses", scroller, legend()),
+      card("Kilómetros por mes", bars));
 
     scroller.scrollLeft = scroller.scrollWidth;
   });
+  return () => dispose?.();
 }
