@@ -91,7 +91,7 @@ CAR_TRACE_INGEST_TOKEN=<token> python3 tools/simulate_drive.py --url https://<se
 
 Panel de solo lectura servido por el contenedor `api`, sin login:
 
-- **Resumen:** cifras del mes (km, trayectos, tiempo al volante, velocidad máxima), mapa de calor del último año y barras de los últimos 12 meses.
+- **Resumen:** cifras del mes (km, trayectos y tiempo al volante), mapa de calor del último año y barras de los últimos 12 meses.
 - **Trayectos:** lista y detalle con mapa de la ruta y gráficas sincronizadas.
 - **Averías:** códigos activos y pendientes, con histórico.
 - **Avisos:** seis tipos deducidos de los datos: avería nueva, motor caliente, batería baja, carga anómala, trayecto sin datos del motor y falta de datos.
