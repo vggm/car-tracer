@@ -1,13 +1,9 @@
 import { ApiError, getJSON } from "./api.js";
 import { el, card, stat, emptyState, load } from "./ui.js";
-import { dayLong, hhmm, dur } from "./fmt.js";
-import { monthOf } from "./trips.js";
+import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 
-const nf1 = new Intl.NumberFormat("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const nf0 = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
 const nil = (x) => x === null || x === undefined;
-const n1 = (x) => (nil(x) ? "—" : nf1.format(x));
-const n0 = (x) => (nil(x) ? "—" : nf0.format(Math.round(x)));
+const filled = (a) => Array.isArray(a) && a.filter((v) => !nil(v)).length >= 2;
 const SYNC = "trip-cursor";
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -24,9 +20,9 @@ function nearest(points, t) {
 }
 
 function notFound() {
-  return el("section", { class: "card empty-card" },
+  return el("section", { class: "card" },
     emptyState("Trayecto no encontrado"),
-    el("div", { class: "center" }, el("a", { class: "btn btn-link", href: "#/trayectos" }, "Ver trayectos")));
+    el("div", { class: "trip-nf" }, el("a", { class: "btn", href: "#/trayectos" }, "Ver trayectos")));
 }
 
 export async function render(main, params) {
@@ -95,7 +91,7 @@ export async function render(main, params) {
       };
     }
 
-    main.append(card(null, el("div", { class: "stats" },
+    main.append(card(null, el("div", { class: "stats trip-stats" },
       stat("Distancia", n1(t.km), "km"),
       stat("Duración", dur(t.duration_ms)),
       stat("Media", n0(t.avg_kmh), "km/h"),
@@ -107,28 +103,30 @@ export async function render(main, params) {
       stat("rpm máxima", n0(t.rpm_max)))));
 
     if (t.new_dtcs && t.new_dtcs.length) {
+      const descs = new Map((t.new_dtcs_desc || []).map((d) => [d.code, d.desc]));
       main.append(card("Averías nuevas",
-        el("div", { class: "dtc-list" }, t.new_dtcs.map((c) => el("span", { class: "tag bad num" }, c))),
+        el("ul", { class: "trip-dtcs" }, t.new_dtcs.map((c) =>
+          el("li", {}, el("span", { class: "dtc-code" }, c),
+            descs.get(c) ? el("span", { class: "dtc-desc" }, descs.get(c)) : null))),
         el("a", { class: "dtc-link", href: "#/averias" }, "Ver averías ›")));
     }
 
     const s = t.series;
     if (!s || !s.ts || s.ts.length < 2) return;
     const xs = s.ts.map((v) => v / 1000);
-    const hasObd = s.rpm.some((v) => !nil(v));
+    const hasRpm = filled(s.rpm), hasCool = filled(s.coolant_c);
     const box = el("div", { class: "card charts" },
-      el("h2", { class: "card-title" }, hasObd ? "Velocidad y rpm" : "Velocidad"),
+      el("h2", { class: "card-title" }, hasRpm ? "Velocidad y rpm" : "Velocidad"),
       el("div", { class: "chart", "data-chart": "main" }));
     let coolBox = null;
-    if (hasObd) {
+    if (hasCool) {
       coolBox = el("div", { class: "chart", "data-chart": "coolant" });
       box.append(el("h2", { class: "card-title chart-sub" }, "Refrigerante"), coolBox);
-    } else {
-      box.append(el("p", { class: "chart-note" }, "Sin datos del motor en este trayecto"));
     }
+    if (!t.has_obd) box.append(el("p", { class: "chart-note" }, "Sin datos del motor en este trayecto"));
     main.append(box);
 
-    const tzDate = (ts) => uPlot.tzDate(new Date(ts * 1000), "Europe/Madrid");
+    const tzDate = (ts) => uPlot.tzDate(new Date(ts * 1000), TZ);
     const cursorSync = () => ({ sync: { key: SYNC }, drag: { x: false, y: false }, points: { size: 7 } });
     const setCursor = (u) => {
       const idx = u.cursor.idx;
@@ -156,12 +154,12 @@ export async function render(main, params) {
       const main1 = {
         ...base, width: width(), height: 220, cursor: cursorSync(),
         series: [{}, { label: "km/h", stroke: accent, width: 2, scale: "kmh", spanGaps: false },
-          ...(hasObd ? [{ label: "rpm", stroke: muted, width: 1.5, scale: "rpm", spanGaps: false }] : [])],
+          ...(hasRpm ? [{ label: "rpm", stroke: muted, width: 1.5, scale: "rpm", spanGaps: false }] : [])],
         scales: { x: { time: true }, kmh: { range: (u, lo, hi) => [0, Math.max(hi, 10)] }, rpm: { range: (u, lo, hi) => [0, Math.max(hi, 1000)] } },
         axes: [xAxis, axis({ scale: "kmh", label: "km/h", labelSize: 16, labelFont: "11px system-ui, sans-serif" }),
-          ...(hasObd ? [axis({ scale: "rpm", side: 1, label: "rpm", labelSize: 16, labelFont: "11px system-ui, sans-serif", grid: { show: false } })] : [])],
+          ...(hasRpm ? [axis({ scale: "rpm", side: 1, label: "rpm", labelSize: 16, labelFont: "11px system-ui, sans-serif", grid: { show: false } })] : [])],
       };
-      const data1 = [xs, s.speed_kmh, ...(hasObd ? [s.rpm] : [])];
+      const data1 = [xs, s.speed_kmh, ...(hasRpm ? [s.rpm] : [])];
       const u1 = new uPlot(main1, data1, box.querySelector('[data-chart="main"]'));
       charts.push(u1);
       if (coolBox) {

@@ -366,7 +366,7 @@ a.mp-btn:hover { background: var(--surface-2); }
 
 /* === Task 9: trips === */
 
-.page-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 16px; }
+.trips-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 16px; }
 .tag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
 
 .day-group { margin: 0 0 18px; padding: 4px 0; border-radius: var(--radius); transition: background-color .6s; scroll-margin-top: 76px; }
@@ -395,14 +395,14 @@ a.mp-btn:hover { background: var(--surface-2); }
 .trip-sub { margin: 2px 0 0; color: var(--muted); font-size: 16px; }
 .map-card { padding: 8px; }
 .trip-map { height: 300px; border-radius: 10px; }
-.stats { row-gap: 18px; }
-.dtc-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.trip-stats { row-gap: 18px; }
+.trip-dtcs { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
 .dtc-link { color: var(--accent); font-size: 14px; }
 .charts .chart { width: 100%; min-height: 20px; }
 .charts .chart-sub { margin-top: 14px; }
 .chart-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
-.center { text-align: center; padding-bottom: 8px; }
-.btn-link { display: inline-flex; align-items: center; text-decoration: none; }
+.trip-nf { text-align: center; padding-bottom: 8px; }
+.trip-nf .btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 @media (min-width: 900px) {
   .trip-map { height: 420px; }
@@ -435,6 +435,7 @@ a.mp-btn:hover { background: var(--surface-2); }
 .empty-icon { display: block; width: 40px; height: 40px; margin: 0 auto 10px; fill: none; stroke: var(--ok); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 /* === Task 8: resumen (mapa de calor y barras) === */
 
+.card:has(> .hm-scroll) { position: relative; }
 .hm-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px 4px; -webkit-overflow-scrolling: touch; }
 .hm { display: block; max-width: none; }
 .hm-label, .mb-x { fill: var(--muted); font: 10px var(--font); }
@@ -475,4 +476,13 @@ a.mp-btn:hover { background: var(--surface-2); }
   .hm-label { font-size: 9px; }
   .mb-x, .mb-val { font-size: 11px; }
 }
+
+.hm-pop {
+  position: absolute; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px;
+  max-width: calc(100% - 16px); padding: 8px 12px; font-size: 13px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / .28);
+}
+.hm-pop a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.hm-pop a:hover { text-decoration: underline; }
 /* === /Task 8 === */

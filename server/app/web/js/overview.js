@@ -1,9 +1,7 @@
 import { el, card, stat, monthPicker, emptyState, load } from "./ui.js";
 import { getJSON } from "./api.js";
-import { km, kmh, dur, monthName, thisMonth } from "./fmt.js";
+import { km, kmh, dur, monthName, thisMonth, today } from "./fmt.js";
 import { heatmap, monthBars } from "./charts.js";
-
-const fToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid" });
 
 function legend() {
   const row = el("div", { class: "hm-legend", "aria-hidden": "true" }, el("span", {}, "Menos"));
@@ -21,14 +19,14 @@ export async function render(main, params) {
     const endDate = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     const t = data.totals;
 
-    const scroller = el("div", { class: "hm-scroll" },
-      heatmap(data.days, {
-        endDate, today: fToday.format(new Date()),
-        onDay: (d) => { location.hash = `#/trayectos/${d.slice(0, 7)}?dia=${d.slice(8)}`; },
-      }));
+    const scroller = el("div", { class: "hm-scroll" });
+    const hm = heatmap(data.days, { endDate, today: today() });
+    scroller.append(hm);
+    const hmCard = card("Últimos 12 meses", scroller, legend());
+    hm.attachPopover(hmCard);
 
     const bars = monthBars(data.months, { selected: month, onSelect: (mo) => { location.hash = `#/resumen/${mo}`; } });
-    dispose = bars.dispose;
+    dispose = () => { bars.dispose?.(); hm.dispose(); };
 
     main.append(
       el("h1", { class: "page-title" }, "Resumen"),
@@ -40,7 +38,7 @@ export async function render(main, params) {
           stat("Al volante", dur(t.drive_ms ?? 0)),
           stat("Velocidad máx.", kmh(t.max_kmh ?? 0).replace(" km/h", ""), "km/h")),
         t.trips ? null : emptyState(`Sin trayectos en ${monthName(month)}`)),
-      card("Últimos 12 meses", scroller, legend()),
+      hmCard,
       card("Kilómetros por mes", bars));
 
     scroller.scrollLeft = scroller.scrollWidth;

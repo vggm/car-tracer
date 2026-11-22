@@ -1,14 +1,6 @@
 import { getJSON } from "./api.js";
 import { el, monthPicker, emptyState, load } from "./ui.js";
-import { thisMonth, monthName, dayLong, hhmm, dur, kmh } from "./fmt.js";
-
-const fIso = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" });
-
-// "YYYY-MM-DD" local (Europe/Madrid) de un ms UTC.
-export const localDate = (ts) => fIso.format(ts);
-export const monthOf = (ts) => localDate(ts).slice(0, 7);
-
-const fmtKm = (x) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(x);
+import { thisMonth, monthName, dayLong, hhmm, dur, kmh, n1, localDate } from "./fmt.js";
 
 function row(t) {
   const meta = el("div", { class: "trip-meta" },
@@ -19,7 +11,7 @@ function row(t) {
     el("div", { class: "trip-main" },
       el("div", { class: "trip-time num" }, `${hhmm(t.start_ts)} → ${hhmm(t.end_ts)}`),
       meta),
-    el("div", { class: "trip-km num" }, fmtKm(t.km), el("small", {}, " km")),
+    el("div", { class: "trip-km num" }, n1(t.km), el("small", {}, " km")),
     el("span", { class: "trip-chev", "aria-hidden": "true" }, "›"));
 }
 
@@ -27,7 +19,7 @@ export async function render(main, params, query) {
   const month = params[0] || thisMonth();
   document.title = "Trayectos · car-trace";
   const dia = query && query.get("dia");
-  const head = el("div", { class: "page-head" },
+  const head = el("div", { class: "trips-head" },
     el("h1", { class: "page-title" }, "Trayectos"),
     monthPicker(month, (m) => `#/trayectos/${m}`));
   const body = el("div");
@@ -50,7 +42,7 @@ export async function render(main, params, query) {
       const g = el("section", { class: "day-group", "data-day": k.slice(8) },
         el("div", { class: "day-head" },
           el("h2", {}, dayLong(list[0].start_ts)),
-          el("span", { class: "num" }, `${fmtKm(total)} km`)),
+          el("span", { class: "num" }, `${n1(total)} km`)),
         el("div", { class: "day-list" }, list.map(row)));
       body.append(g);
     }
