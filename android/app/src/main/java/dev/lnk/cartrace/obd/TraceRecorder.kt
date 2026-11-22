@@ -118,7 +118,12 @@ class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Lo
     private fun add(t0: Long, cmd: String, response: String, err: String?) {
         val dur = maxOf(0L, nowMs() - t0)
         synchronized(lock) {
-            store("+${offset(t0)} > $cmd | $response | $dur" + (err?.let { " | ERR $it" } ?: ""))
+            val prefix = "+${offset(t0)} > $cmd | "
+            val tail = " | $dur" + (err?.let { " | ERR $it" } ?: "")
+            // Only the response may be cut: the duration/ERR tail is what diagnostics need.
+            val budget = maxOf(0, MAX_LINE - prefix.length - tail.length)
+            val body = if (response.length > budget) response.take(maxOf(0, budget - 1)) + "…" else response
+            store(prefix + body + tail)
         }
     }
 
@@ -132,7 +137,7 @@ internal fun escapeRaw(s: String): String = buildString {
     for (c in s) when {
         c == '\r' -> append('⏎')
         c == '\n' -> append('↵')
-        c.code < 0x20 || c.code == 0x7f -> append("\\x").append(HEX[c.code shr 4]).append(HEX[c.code and 15])
+        c.code < 0x20 || c.code in 0x7f..0xFF -> append("\\x").append(HEX[c.code shr 4 and 15]).append(HEX[c.code and 15])
         else -> append(c)
     }
 }
