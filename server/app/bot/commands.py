@@ -9,8 +9,9 @@ from app.bot.telegram import TelegramError
 from app.location import car_status, format_status
 from app.scans import create_scan
 from app.route_map import render_route_png
-from app.trip_text import format_trip_detail, format_trip_list, has_route, trip_list_keyboard
-from app.trips import get_trip, list_trips, parse_trip_ts
+from app.journeys import find_journey, group_items, load_journeys, parse_journey_id
+from app.trip_text import format_journey_detail, format_trip_detail, format_trip_list, has_route, trip_list_keyboard
+from app.trips import PAGE_SIZE, get_trip, list_trips, parse_trip_ts, range_trips
 from app.vehicle import format_estado
 
 log = logging.getLogger(__name__)
@@ -50,13 +51,28 @@ def _command(text: str) -> str:
     return word.split("@", 1)[0].lower()
 
 
-def _send_trip_list(client, chat_id, conn, now_ms, tz, before_ts, empty_text) -> None:
-    trips, has_more = list_trips(conn, before_ts=before_ts)
+def _page_items(conn, before_ts):
+    """One page of trips/journeys, newest first, and whether older ones exist."""
+    trips, more = list_trips(conn, before_ts=before_ts, limit=PAGE_SIZE + 2)
     if not trips:
+        return [], False
+    journeys = load_journeys(conn)
+    oldest = trips[-1].start_ts
+    known = {t.id for t in trips}
+    for j in journeys:  # complete a journey cut by the page margin
+        if j.start_ts < oldest <= j.end_ts:
+            trips += [t for t in range_trips(conn, j.start_ts, j.end_ts) if t.id not in known]
+    items = group_items(trips, journeys)
+    return items[:PAGE_SIZE], more or len(items) > PAGE_SIZE
+
+
+def _send_trip_list(client, chat_id, conn, now_ms, tz, before_ts, empty_text) -> None:
+    items, has_more = _page_items(conn, before_ts)
+    if not items:
         client.send_message(chat_id, empty_text)
         return
-    client.send_message(chat_id, format_trip_list(trips, now_ms, tz),
-                        reply_markup=trip_list_keyboard(trips, has_more), parse_mode="HTML")
+    client.send_message(chat_id, format_trip_list(items, now_ms, tz),
+                        reply_markup=trip_list_keyboard(items, has_more), parse_mode="HTML")
 
 
 CAPTION_LIMIT = 1024
@@ -66,20 +82,13 @@ def _send_trip_text(client, chat_id, text: str) -> None:
     client.send_message(chat_id, text, parse_mode="HTML")
 
 
-def _send_trip(client, chat_id, conn, tz, trip_id: str, fetch_tile=None) -> None:
-    if parse_trip_ts(trip_id) is None:
-        return  # malformed
-    trip = get_trip(conn, trip_id)
-    if trip is None:
-        client.send_message(chat_id, "Ese trayecto ya no está disponible.")
-        return
-    route = has_route(trip.points)
-    text = format_trip_detail(trip, tz, route)
+def _send_detail(client, chat_id, text: str, points, fetch_tile) -> None:
+    route = has_route(points)
     if not route or fetch_tile is None:
         _send_trip_text(client, chat_id, text)
         return
     try:
-        png = render_route_png(trip.points, fetch_tile)
+        png = render_route_png(points, fetch_tile)
         short = len(text) <= CAPTION_LIMIT
         client.send_photo(chat_id, png, caption=text if short else "", parse_mode="HTML")
     except Exception as e:
@@ -89,6 +98,31 @@ def _send_trip(client, chat_id, conn, tz, trip_id: str, fetch_tile=None) -> None
         return
     if not short:
         _send_trip_text(client, chat_id, text)
+
+
+def _send_journey(client, chat_id, conn, tz, journey_id: int, fetch_tile=None) -> None:
+    journeys = load_journeys(conn)
+    j = next((j for j in journeys if j.id == journey_id), None)
+    view = find_journey(range_trips(conn, j.start_ts, j.end_ts), journeys, journey_id) if j else None
+    if view is None:
+        client.send_message(chat_id, "Ese trayecto ya no está disponible.")
+        return
+    points = [p for s in view.segments for p in s.points]
+    _send_detail(client, chat_id, format_journey_detail(view, tz, has_route(points)), points, fetch_tile)
+
+
+def _send_trip(client, chat_id, conn, tz, trip_id: str, fetch_tile=None) -> None:
+    if trip_id.startswith("v") and (jid := parse_journey_id(trip_id)) is not None:
+        _send_journey(client, chat_id, conn, tz, jid, fetch_tile)
+        return
+    if parse_trip_ts(trip_id) is None:
+        return  # malformed
+    trip = get_trip(conn, trip_id)
+    if trip is None:
+        client.send_message(chat_id, "Ese trayecto ya no está disponible.")
+        return
+    route = has_route(trip.points)
+    _send_detail(client, chat_id, format_trip_detail(trip, tz, route), trip.points, fetch_tile)
 
 
 def _clear_gate(conn, now_ms) -> str | None:

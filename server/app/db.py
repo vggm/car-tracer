@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS clear_confirmations (
   used_at    INTEGER
 );
 CREATE TABLE IF NOT EXISTS journeys (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   start_ts   INTEGER NOT NULL,
   end_ts     INTEGER NOT NULL,
   created_at INTEGER NOT NULL
