@@ -36,6 +36,13 @@ def _warm(app: FastAPI) -> None:
         log.exception("cache warm-up failed")
 
 
+class _OptionalDirStaticFiles(StaticFiles):
+    """StaticFiles that answers 404 (not RuntimeError) when the directory is absent."""
+
+    async def check_config(self) -> None:
+        return None
+
+
 def create_app(
     settings: Settings,
     clock: Callable[[], int] = now_ms,
@@ -58,6 +65,9 @@ def create_app(
                     or Path(settings.db_path).parent / "tiles")
     tile_dir.mkdir(parents=True, exist_ok=True)
     app.include_router(tiles_router(TileCache(tile_dir, http or httpx.Client())))
+    map_dir = Path(os.environ.get("CAR_TRACE_MAP_DIR")
+                   or Path(settings.db_path).parent / "maps")
+    app.mount("/maps", _OptionalDirStaticFiles(directory=map_dir, check_dir=False), name="maps")
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

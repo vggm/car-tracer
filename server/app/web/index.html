@@ -4,8 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#111315" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111315">
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("ct.theme"); } catch (e) {}
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  var dark = t ? t === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#111315" : "#f6f5f2";
+})();
+</script>
 <title>Car Trace</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%235cb8ff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
@@ -36,6 +44,10 @@
       <span>Avisos</span><b class="badge" id="alerts-badge" hidden></b>
     </a>
   </nav>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Cambiar tema">
+    <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>
+    <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>
+  </button>
 </header>
 <main id="main" tabindex="-1"></main>
 <noscript><p style="padding:16px">Car Trace necesita JavaScript.</p></noscript>
