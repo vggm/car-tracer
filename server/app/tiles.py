@@ -10,7 +10,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-USER_AGENT = "car-trace-bot/1.0 (self-hosted, personal use)"
+USER_AGENT = "car-trace/1.0 (self-hosted, personal use)"
 MAX_AGE_S = 7 * 24 * 3600
 TIMEOUT_S = 5.0
 BACKOFF_S = 60.0

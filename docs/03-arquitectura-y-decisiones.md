@@ -36,7 +36,7 @@ La tablet solo envía datos hacia fuera. Lo único accesible desde internet es e
 
 ### Qué hacer con el proyecto anterior
 
-El proyecto `ocdb-dashboard-app` (FastAPI + python-obd + React, pensado para PC) no encaja en la tablet, pero gran parte se aprovecha. El **backend FastAPI** pasa a ser el servidor de casa (su hoja de ruta ya preveía una fase de sincronización con un servidor). El **frontend React** pasa a ser el panel web del servidor. La **lógica** (lista de PIDs, lectura de averías, modo simulado para desarrollar sin coche) se lleva a la app Kotlin. Hay que revisar el cálculo de consumo: si su último recurso es estimar con el caudal de aire (MAF), en un diésel da valores muy erróneos.
+El proyecto `ocdb-dashboard-app` (FastAPI + python-obd + React, pensado para PC) no encaja en la tablet, pero gran parte se aprovecha. El **backend FastAPI** pasa a ser el servidor de casa (su hoja de ruta ya preveía una fase de sincronización con un servidor). El **frontend React** al final no se reutilizó: el panel es una web estática sin paso de compilación. La **lógica** (lista de PIDs, lectura de averías, modo simulado para desarrollar sin coche) se lleva a la app Kotlin. Hay que revisar el cálculo de consumo: si su último recurso es estimar con el caudal de aire (MAF), en un diésel da valores muy erróneos.
 
 ### Cómo llega la tablet al servidor
 
@@ -71,5 +71,7 @@ El bot debe responder solo al chat del propietario. Hay que tener en cuenta que 
 **Servidor.** Recibe y guarda los datos; tolera reenvíos sin duplicar. Calcula los trayectos, el estado (en marcha o aparcado y dónde), las alertas (avería nueva, voltaje bajo, temperatura alta, adaptador que no conecta, mantenimiento pendiente) y el kilometraje para el mantenimiento.
 
 **Panel web.** Mapa con la posición o el aparcamiento, lista de trayectos con ruta y gráficas, averías y alertas, y mantenimiento.
+
+El panel ya está implementado dentro del contenedor `api`: una API JSON de solo lectura (`/api/panel/*`) y una web estática sin paso de compilación (módulos ES, con Leaflet y uPlot incluidos en el repositorio). Las teselas de OpenStreetMap pasan por el servidor (`/tiles`, con caché compartida con el bot), así que el navegador nunca habla con OSM. Los trayectos se calculan al vuelo, con una caché en memoria por sesión, y las lecturas del panel usan una conexión SQLite por hilo.
 
 **Bot.** Consultas rápidas desde el móvil y envío de alertas.

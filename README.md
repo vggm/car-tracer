@@ -31,7 +31,7 @@ Tablet Junsun (Android)                       Servidor de casa (Podman)
 | Bot de Telegram con `/donde` | Hecho y desplegado |
 | App Android (GPS, ELM327, cola, envío, arranque automático, modo simulado) | Hecha; en validación en la tablet |
 | Prueba en el coche con el ELM327 real | Pendiente |
-| Panel web con mapa, trayectos y gráficas | Pendiente |
+| Panel web con mapa, trayectos y gráficas | Hecho |
 | Alertas de averías, voltaje y mantenimiento | Pendiente |
 
 ## Estructura del repositorio
@@ -39,9 +39,10 @@ Tablet Junsun (Android)                       Servidor de casa (Podman)
 | Ruta | Contenido |
 | --- | --- |
 | `android/` | App Android en Kotlin con Jetpack Compose, Room, OkHttp y coroutines. minSdk 33, targetSdk 34 |
-| `server/` | API de ingesta y bot de Telegram en Python 3.12 (FastAPI, pydantic, httpx), gestionado con uv |
+| `server/` | API de ingesta, panel web (API JSON en `app/panel/`, web estática en `app/web/`) y bot de Telegram en Python 3.12 (FastAPI, pydantic, httpx), gestionado con uv |
 | `docker-compose.yml` | Despliegue de los dos contenedores (`car-trace-api` y `car-trace-bot`) |
 | `tools/simulate_drive.py` | Simula un trayecto y lo envía al servidor (solo stdlib) |
+| `tools/seed_demo_db.py` | Crea una base de datos SQLite con datos de demostración para probar el panel |
 | `docs/` | Diseño, contrato de datos y guías |
 
 ## Puesta en marcha
@@ -85,6 +86,27 @@ La app tiene un modo simulado que genera un trayecto ficticio. Desde un ordenado
 ```bash
 CAR_TRACE_INGEST_TOKEN=<token> python3 tools/simulate_drive.py --url https://<servidor>/api/v1/ingest
 ```
+
+## Panel web
+
+Panel de solo lectura servido por el contenedor `api`, sin login:
+
+- **Resumen:** cifras del mes (km, trayectos, tiempo al volante, velocidad máxima), mapa de calor del último año y barras de los últimos 12 meses.
+- **Trayectos:** lista y detalle con mapa de la ruta y gráficas sincronizadas.
+- **Averías:** códigos activos y pendientes, con histórico.
+- **Avisos:** seis tipos deducidos de los datos: avería nueva, motor caliente, batería baja, carga anómala, trayecto sin datos del motor y falta de datos.
+
+Se abre en `http://<ip-tailscale>:8090/` y solo es accesible a través de Tailscale: Funnel expone únicamente la ruta de ingesta y cualquier otra devuelve 404. Los mapas usan teselas de OpenStreetMap que descarga el servidor; el navegador nunca se conecta a OSM.
+
+Para probarlo en local con datos de demostración:
+
+```bash
+cd server
+uv run python ../tools/seed_demo_db.py /tmp/demo.db
+CAR_TRACE_INGEST_TOKEN=demo CAR_TRACE_DB=/tmp/demo.db CAR_TRACE_TZ=Europe/Madrid uv run python -m app
+```
+
+El panel queda en `http://localhost:8000/`.
 
 ## Documentación
 
