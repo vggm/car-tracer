@@ -54,7 +54,7 @@ function historyCard(history) {
 }
 
 export async function render(main) {
-  document.title = "Averías · car-trace";
+  document.title = "Averías · Car Trace";
   main.append(el("h1", { class: "page-title" }, "Averías"));
   const box = el("div", { class: "grid" });
   main.append(box);

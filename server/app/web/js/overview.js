@@ -12,7 +12,7 @@ function legend() {
 
 export async function render(main, params) {
   const month = params[0] || thisMonth();
-  document.title = "Resumen · car-trace";
+  document.title = "Resumen · Car Trace";
   let dispose;
   await load(main, () => getJSON(`/api/panel/overview?month=${encodeURIComponent(month)}`), (data) => {
     const [y, m] = month.split("-").map(Number);
@@ -28,17 +28,18 @@ export async function render(main, params) {
     const bars = monthBars(data.months, { selected: month, onSelect: (mo) => { location.hash = `#/resumen/${mo}`; } });
     dispose = () => { bars.dispose?.(); hm.dispose(); };
 
+    const cards = el("div", { class: "ov-cards" },
+      card(null, stat("Kilómetros", km(t.km).replace(" km", ""), "km")),
+      card(null, stat("Trayectos", String(t.trips))),
+      card(null, stat("Al volante", dur(t.drive_ms ?? 0))));
+
     main.append(
       el("h1", { class: "page-title" }, "Resumen"),
       monthPicker(month, (x) => `#/resumen/${x}`),
-      card(null,
-        el("div", { class: "stats overview-stats" },
-          stat("Kilómetros", km(t.km).replace(" km", ""), "km"),
-          stat("Trayectos", String(t.trips)),
-          stat("Al volante", dur(t.drive_ms ?? 0))),
-        t.trips ? null : emptyState(`Sin trayectos en ${monthName(month)}`)),
+      cards,
       hmCard,
       card("Kilómetros por mes", bars));
+    if (!t.trips) cards.after(emptyState(`Sin trayectos en ${monthName(month)}`));
 
     scroller.scrollLeft = scroller.scrollWidth;
   });
