@@ -762,12 +762,13 @@ def test_journey_cut_at_page_edge_is_completed(conn):
     for k in range(8):  # 8 trips, oldest first, 1 h apart
         drive(conn, t0 + k * 3_600_000, 300, north0=k * 5000)
     trips = range_trips(conn, 0, 10**13)
-    # journey of trips 0-1 (oldest); page of 5 + 2 margin would cut it at trip 1
-    join(conn, trips, trips[0].id, trips[1].id, 1)
+    for k in (0, 1):  # journey of trips 0-2 (oldest)
+        join(conn, trips, trips[k].id, trips[k + 1].id, 1)
+    for k in range(3, 7):  # journey of trips 3-7
+        join(conn, trips, trips[k].id, trips[k + 1].id, 1)
     c = FakeClient()
     run(msg("/trayectos"), conn, c)
-    assert "2 tramos" not in c.calls[0][2]
-    before = c.calls[1][1]["inline_keyboard"][1][0]["callback_data"]
-    c2 = FakeClient()
-    run(cb(before), conn, c2)
-    assert "2 tramos" in c2.calls[1][2]
+    # the fetch margin (7 trips) stops at trip 1: the old journey must still show all 3 segments
+    lines = [ln for ln in c.calls[0][2].splitlines() if "→" in ln]
+    assert len(lines) == 2
+    assert "5 tramos" in lines[0] and "3 tramos" in lines[1]
