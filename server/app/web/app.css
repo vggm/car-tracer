@@ -594,3 +594,10 @@ a.mp-btn:hover { background: var(--surface-2); }
 .ct-row { display: flex; align-items: center; gap: .35rem; }
 .ct-dot { width: .45rem; height: .45rem; border-radius: 50%; flex: none; }
 /* === /Polish B === */
+
+/* trip list: journeys and join */
+.trip-gap { margin: -0.133rem 0.933rem; padding: 0.133rem 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+.trip-join { color: var(--accent); text-decoration: none; font-weight: 600; }
+.trip-join:hover { text-decoration: underline; }
+.trip-join[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+.trip-join-err { color: var(--bad); }
