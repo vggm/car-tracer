@@ -98,6 +98,14 @@ Panel de solo lectura servido por el contenedor `api`, sin login:
 
 Se abre en `http://<ip-tailscale>:8090/` y solo es accesible a través de Tailscale: Funnel expone únicamente la ruta de ingesta y cualquier otra devuelve 404. Los mapas usan teselas de OpenStreetMap que descarga el servidor; el navegador nunca se conecta a OSM.
 
+**Mapa base propio:** el mapa del trayecto usa por defecto un extracto vectorial de Protomaps (España peninsular y Baleares, zoom 14, unos 1,7 GB) servido por la propia API desde `data/maps/spain.pmtiles` (`/maps/spain.pmtiles`, con peticiones Range). No está en git; para (re)generarlo con el CLI `pmtiles`:
+
+```
+pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles data/maps/spain.pmtiles --bbox=-9.6,35.9,4.5,43.9 --maxzoom=14
+```
+
+Sin el archivo, el panel usa solo OSM. Un selector «Protomaps / OSM» sobre el mapa recuerda la capa elegida. El botón sol/luna de la barra cambia entre tema claro y oscuro (por defecto sigue al sistema) y recuerda la elección.
+
 Para probarlo en local con datos de demostración:
 
 ```bash
