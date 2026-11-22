@@ -138,3 +138,12 @@ def test_parse_journey_id():
     assert parse_journey_id("v12") == 12
     for bad in ("12", "v", "vx", "v-1", "v1.5"):
         assert parse_journey_id(bad) is None
+
+
+def test_journey_ids_are_never_reused(setup):
+    conn, (a, b, c) = setup
+    first = join(conn, [a, b, c], a.id, b.id, 1)
+    assert first == 1
+    separate(conn, first)
+    second = join(conn, [a, b, c], b.id, c.id, 2)
+    assert second != first
