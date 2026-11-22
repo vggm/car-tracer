@@ -48,4 +48,16 @@ class GpsNoFixWatcherTest {
         now = 12_500
         assertEquals(7L, w.fixAgeS())
     }
+
+    @Test
+    fun resumeAfterSleepDoesNotFireAndRearms() {
+        now = 10_000
+        w.onFix()
+        now = 10_000 + 3_600_000 // slept an hour
+        w.onResume()
+        assertFalse(w.tick())
+        assertEquals(3600L, w.fixAgeS())
+        now += 120_001
+        assertTrue(w.tick())
+    }
 }

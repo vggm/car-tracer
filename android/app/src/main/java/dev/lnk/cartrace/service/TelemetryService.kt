@@ -17,6 +17,7 @@ import dev.lnk.cartrace.contract.HealthRecord
 import dev.lnk.cartrace.diag.Diagnostics
 import dev.lnk.cartrace.diag.HealthProbe
 import dev.lnk.cartrace.diag.PrefsPendingDiagStore
+import dev.lnk.cartrace.diag.UploadDiagTracker
 import dev.lnk.cartrace.diag.flushPending
 import dev.lnk.cartrace.diag.healthValues
 import dev.lnk.cartrace.diag.obdStateCode
@@ -59,7 +60,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class TelemetryService : Service() {
@@ -84,8 +84,7 @@ class TelemetryService : Service() {
     private var serviceStartMs = 0L
     @Volatile private var lastUploadOkMs: Long? = null
     @Volatile private var lastAccM: Double? = null
-    private val failuresSinceBeat = AtomicInteger(0)
-    private var failStreak = 0
+    private val uploadDiag = UploadDiagTracker()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -265,28 +264,8 @@ class TelemetryService : Service() {
     }
 
     private fun onUploadOutcome(o: UploadOutcome) {
-        when (o) {
-            is UploadOutcome.Sent -> {
-                if (failStreak > 0) reportAsync("upload.failing", "recuperado tras $failStreak fallos")
-                failStreak = 0
-                lastUploadOkMs = graph.clocks.elapsedMs()
-            }
-            is UploadOutcome.Retry -> {
-                failuresSinceBeat.incrementAndGet()
-                if (++failStreak == 1) reportAsync("upload.failing", o.reason)
-            }
-            UploadOutcome.Unauthorized -> {
-                failuresSinceBeat.incrementAndGet()
-                failStreak++
-                reportAsync("upload.unauthorized", "server answered 401")
-            }
-            UploadOutcome.TooLarge -> {
-                failuresSinceBeat.incrementAndGet()
-                failStreak++
-                reportAsync("upload.too_large", "server answered 413")
-            }
-            is UploadOutcome.Discarded, UploadOutcome.Idle -> Unit
-        }
+        if (o is UploadOutcome.Sent) lastUploadOkMs = graph.clocks.elapsedMs()
+        uploadDiag.onOutcome(o)?.let { (code, text) -> reportAsync(code, text) }
     }
 
     private suspend fun emitHealth() {
@@ -295,9 +274,9 @@ class TelemetryService : Service() {
             queuePending = try { graph.queue.size().toLong() } catch (e: Exception) { null },
             queueDroppedTotal = graph.queue.droppedCount.value.toLong(),
             uploadOkAgeS = lastUploadOkMs?.let { (now - it) / 1000 },
-            uploadFailures = failuresSinceBeat.getAndSet(0).toLong(),
+            uploadFailures = uploadDiag.takeFailures().toLong(),
             gpsFixAgeS = noFix.fixAgeS(),
-            gpsAccM = lastAccM,
+            gpsAccM = lastAccM.takeIf { (noFix.fixAgeS() ?: Long.MAX_VALUE) <= 120 },
             obdState = if (currentObd == null) 0 else obdStateCode(Status.obd.value),
             serviceUptimeS = (now - serviceStartMs) / 1000,
         )
@@ -395,6 +374,8 @@ class TelemetryService : Service() {
             emitEvent(fresh, Events.RESUMED, null)
         }
         session.set(fresh)
+        noFix.onResume() // the monotonic clock advanced during sleep: not a GPS outage
+        safely("health") { emitHealth() }
         uploadLoop?.resetBackoff() // first upload after deep sleep must not wait out an old backoff
         restartObd()
     }

@@ -62,10 +62,20 @@ class Diagnostics(
         }
     }
 
+    /** Emits without dedup, but still opens the window for later [report] calls of the same code. */
+    suspend fun reportNow(code: String, text: String) {
+        val out = mutex.withLock {
+            entries[code] = Entry(nowMs(), 0)
+            format(code, 0, text)
+        }
+        emit(code, out)
+    }
+
     private fun format(code: String, n: Int, text: String): String =
         "$code${if (n > 0) " x$n" else ""} ${sanitize(text)}".take(MAX_DIAG_DETAIL)
 }
 
+/** Emits each drained item as is: pending items bypass the dedup (two crashes both arrive). */
 suspend fun Diagnostics.flushPending(store: PendingDiagStore) {
-    for ((code, text) in store.drain()) report(code, text)
+    for ((code, text) in store.drain()) reportNow(code, text)
 }
