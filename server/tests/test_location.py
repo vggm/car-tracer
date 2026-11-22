@@ -311,3 +311,16 @@ def test_relative_time_buckets():
     assert "hace 59 min" in rel(3599)
     assert "hace 1 h 0 min" in rel(3600)
     assert "hace 2 h 5 min" in rel(7500)
+
+
+def test_diagnostic_records_do_not_change_car_status(tmp_path):
+    c = _conn(tmp_path)
+    gps(c, 1_000_000, speed=10.0)
+    add(c, 1_000_000, "obd", {"values": {"rpm": 2000}})
+    now = 1_000_000 + 30_000
+    before = car_status(c, now)
+    add(c, 1_020_000, "health", {"values": {"battery_pct": 80}})
+    add(c, 1_025_000, "event", {"event": "obd_trace", "detail": "x"})
+    add(c, 1_026_000, "event", {"event": "diag", "detail": "gps.no_fix"})
+    assert car_status(c, now) == before
+    assert before.last_ts == 1_000_000

@@ -77,3 +77,35 @@ def test_obd_attempt_failed_event_accepted():
     detail = "n=2 t=54s v=12.4V | 5: BUS INIT ERROR | 0: UNABLE TO CONNECT"
     parsed = parse_record(base(type="event", event="obd_attempt_failed", detail=detail), NOW)
     assert parsed.payload() == {"event": "obd_attempt_failed", "detail": detail}
+
+
+def _event(event, detail):
+    return base(type="event", event=event, detail=detail)
+
+
+def test_obd_trace_detail_limits():
+    assert parse_record(_event("obd_trace", "x" * 4000), NOW).detail == "x" * 4000
+    with pytest.raises(RecordError):
+        parse_record(_event("obd_trace", "x" * 4001), NOW)
+
+
+def test_diag_detail_limits():
+    assert parse_record(_event("diag", "x" * 500), NOW).detail == "x" * 500
+    with pytest.raises(RecordError):
+        parse_record(_event("diag", "x" * 501), NOW)
+
+
+def test_other_events_still_200():
+    assert parse_record(_event("obd_lost", "x" * 200), NOW).detail == "x" * 200
+    with pytest.raises(RecordError):
+        parse_record(_event("obd_lost", "x" * 201), NOW)
+    with pytest.raises(RecordError):
+        parse_record(_event("obd_attempt_failed", "x" * 201), NOW)
+
+
+def test_health_record_valid_and_invalid():
+    rec = parse_record(base(type="health", values={"battery_pct": 80, "gps_age_s": 1.5}), NOW)
+    assert rec.payload() == {"values": {"battery_pct": 80, "gps_age_s": 1.5}}
+    for values in ({}, {"": 1}, {"BAD": 1}, {"a" * 33: 1}, {"x": "1"}, {"x": True}):
+        with pytest.raises(RecordError):
+            parse_record(base(type="health", values=values), NOW)

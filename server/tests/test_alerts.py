@@ -215,3 +215,11 @@ def test_recent_count_seven_days():
 
     items = [mk(NOW), mk(NOW - RECENT_MS), mk(NOW - RECENT_MS - 1)]
     assert recent_count(items, NOW) == 2
+
+
+def test_stale_counts_health_heartbeat(tmp_path):
+    conn = _conn(tmp_path)
+    obd(conn, NOW - 5 * DAY, voltage_v=13.5, rpm=1000)
+    assert len(kinds(alerts(conn), "stale")) == 1
+    add(conn, NOW - 60_000, "health", {"values": {"battery_pct": 80}})
+    assert kinds(alerts(conn), "stale") == []

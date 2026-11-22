@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from app.location import (
+    DRIVING_SQL,
     MAX_ACC_M,
     MAX_SPEED_MPS,
     MOVING_MIN_KMH,
@@ -146,7 +147,7 @@ def _session_segments(
     rows = [
         (ts, t, json.loads(d))
         for ts, t, d in conn.execute(
-            "SELECT ts, type, data FROM records WHERE session_id=? ORDER BY ts, seq",
+            f"SELECT ts, type, data FROM records WHERE session_id=? AND {DRIVING_SQL} ORDER BY ts, seq",
             (session_id,),
         )
     ]
@@ -171,7 +172,8 @@ def list_trips(
     """Newest trips first with start_ts < before_ts; flag = older trips exist."""
     having, params = ("HAVING MIN(ts) < ?", (before_ts,)) if before_ts is not None else ("", ())
     sessions = conn.execute(
-        f"SELECT session_id, MIN(ts) FROM records GROUP BY session_id {having} ORDER BY 2 DESC",
+        f"SELECT session_id, MIN(ts) FROM records WHERE {DRIVING_SQL}"
+        f" GROUP BY session_id {having} ORDER BY 2 DESC",
         params,
     ).fetchall()
     found: list[Trip] = []
