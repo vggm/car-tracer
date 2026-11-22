@@ -7,11 +7,24 @@ object ElmParser {
     )
     private val VOLTAGE = Regex("(\\d+(?:\\.\\d+)?)V")
 
-    /** Splits into lines, removes spaces, prompt, SEARCHING.../BUS INIT noise and empty lines. */
+    /** "BUS INIT: ...OK" immediately followed by data on the same line (no CR between them). */
+    private val GLUED = Regex("^BUSINIT:?\\.+OK([0-9A-F]+)$")
+
+    private fun normalize(line: String): String =
+        line.replace(">", "").filter { c -> !c.isWhitespace() }.uppercase()
+
+    /** Splits into lines, removes spaces, prompt, SEARCHING.../BUS INIT noise and empty lines. Data glued after "BUS INIT: ...OK" is kept. */
     fun clean(raw: String): List<String> =
         raw.split('\r', '\n')
-            .map { it.replace(">", "").filter { c -> !c.isWhitespace() }.uppercase() }
-            .filter { it.isNotEmpty() && !it.startsWith("SEARCHING") && !it.startsWith("BUSINIT") }
+            .map(::normalize)
+            .mapNotNull { line ->
+                GLUED.find(line)?.groupValues?.get(1)
+                    ?: line.takeUnless { it.isEmpty() || it.startsWith("SEARCHING") || it.startsWith("BUSINIT") }
+            }
+
+    /** True when a BUS INIT line carries data glued after its OK. */
+    fun hasGluedData(raw: String): Boolean =
+        raw.split('\r', '\n').any { GLUED.containsMatchIn(normalize(it)) }
 
     fun value(pid: Pid, raw: String): Double? = try {
         val prefix = "41" + pid.cmd.substring(2)
