@@ -1005,30 +1005,71 @@ class ObdSourceTest {
         job.cancel()
     }
 
+    private fun TestScope.atfiQuestionSource(sid: String, log: MutableList<String>) = ObdSource(
+        transportFactory = {
+            object : ElmTransport {
+                val inner = ScriptedTransport(log, dpn = "5")
+                override suspend fun open() = inner.open()
+                override suspend fun command(cmd: String, timeoutMs: Long) =
+                    if (cmd == "ATFI") "?\r\r>" else inner.command(cmd, timeoutMs)
+                override fun close() = inner.close()
+            }
+        },
+        clocks = FakeClocks(),
+        emit = { r, _ -> records += r },
+        sessionProvider = { Session(sid) },
+        nowMs = { currentTime },
+        protocolPreference = "5",
+        delayFn = {},
+    )
+
     @Test
     fun atfiQuestionMarkDoesNotCountTowardsObdError() = runTest {
         val sid = (1..500).map { "q$it" }.first { variantFor(it, 1) == InitVariant.V2 }
+        val src = atfiQuestionSource(sid, mutableListOf())
+        val job = launch { src.run() }
+        advanceTimeBy(5_000 + 10_000 + 1_000)
+        assertEquals(0, attempts().size)
+        assertEquals(0, events().count { it.event == Events.OBD_ERROR })
+        job.cancel()
+    }
+
+    @Test
+    fun atfiUnsupportedContinuesToConnect() = runTest {
+        val sid = (1..500).map { "q$it" }.first { variantFor(it, 1) == InitVariant.V2 }
+        val log = mutableListOf<String>()
+        val src = atfiQuestionSource(sid, log)
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.indexOf("0100") > log.indexOf("ATFI") || log.lastIndexOf("0100") > log.indexOf("ATSP5"))
+        assertTrue(traces().first().contains("ATFI unsupported"))
+        job.cancel()
+    }
+
+    @Test
+    fun probeReconnectWaitsOneSecondBetweenCloseAndOpen() = runTest {
+        val order = mutableListOf<String>()
         val src = ObdSource(
             transportFactory = {
                 object : ElmTransport {
-                    val inner = ScriptedTransport(mutableListOf(), dpn = "5")
-                    override suspend fun open() = inner.open()
-                    override suspend fun command(cmd: String, timeoutMs: Long) =
-                        if (cmd == "ATFI") "?\r\r>" else inner.command(cmd, timeoutMs)
-                    override fun close() = inner.close()
+                    val inner = ScriptedTransport(mutableListOf(), dpn = "5", timeoutOnceOn = "0100")
+                    override suspend fun open() { order += "open"; inner.open() }
+                    override suspend fun command(cmd: String, timeoutMs: Long) = inner.command(cmd, timeoutMs)
+                    override fun close() { order += "close"; inner.close() }
                 }
             },
             clocks = FakeClocks(),
             emit = { r, _ -> records += r },
-            sessionProvider = { Session(sid) },
+            sessionProvider = { session },
             nowMs = { currentTime },
             protocolPreference = "5",
-            delayFn = {},
+            delayFn = { order += "delay$it" },
         )
         val job = launch { src.run() }
-        advanceTimeBy(5_000 + 10_000 + 1_000)
-        assertEquals(3, attempts().size)
-        assertEquals(0, events().count { it.event == Events.OBD_ERROR })
+        advanceTimeBy(100)
+        val i = order.indexOf("close")
+        assertEquals(listOf("close", "delay1000", "open"), order.subList(i, i + 3))
         job.cancel()
     }
 

@@ -176,6 +176,7 @@ class ObdSource(
                     // A timed-out probe command leaves the real socket closed: start over on a fresh one.
                     opened = false
                     rec.close()
+                    delayFn(1_000) // some SPP modules reject an immediate reconnect
                     rec.open()
                     opened = true
                 }
@@ -402,7 +403,9 @@ class ObdSource(
                     if (needsResync(raw)) t.command(step.text, step.timeoutMs)
                 } else if (step.text == "ATFI") {
                     noteGlued(raw)
-                    if (ElmParser.isError(raw)) {
+                    if (ElmParser.clean(raw).singleOrNull() == "?") {
+                        (t as? TraceRecorder)?.note("ATFI unsupported")
+                    } else if (ElmParser.isError(raw)) {
                         val unable = ElmParser.isUnableToConnect(raw)
                         throw InitFailure(
                             when {

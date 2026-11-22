@@ -29,7 +29,7 @@ fun commandsFor(v: InitVariant): List<Step> {
         add(c("ATE0")); add(c("ATL0")); add(c("ATS0")); add(c("ATH0")); add(c("ATSP5"))
         if (v == InitVariant.V4) add(c("ATST FF"))
         add(c("ATKW0"))
-        add(c("ATFI"))
+        add(c("ATFI", RESET_TIMEOUT)) // fast init may take several seconds
         if (v == InitVariant.V5) add(c("ATSH 81 10 F1"))
         add(Step.Wait(500))
     }
