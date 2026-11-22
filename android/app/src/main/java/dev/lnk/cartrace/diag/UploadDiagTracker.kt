@@ -29,7 +29,8 @@ class UploadDiagTracker {
             failStreak++
             "upload.too_large" to "server answered 413"
         }
-        is UploadOutcome.Discarded, UploadOutcome.Idle -> null
+        is UploadOutcome.Discarded -> "upload.discarded" to "server answered ${o.status}" + (o.reason?.let { ": $it" } ?: "")
+        UploadOutcome.Idle -> null
     }
 
     /** Failures since the previous call (the heartbeat's `upload_failures`). */

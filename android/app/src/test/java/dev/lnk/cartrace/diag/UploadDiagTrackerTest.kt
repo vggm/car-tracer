@@ -3,6 +3,7 @@ package dev.lnk.cartrace.diag
 import dev.lnk.cartrace.upload.UploadOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UploadDiagTrackerTest {
@@ -34,9 +35,17 @@ class UploadDiagTrackerTest {
     }
 
     @Test
-    fun idleAndDiscardedAreSilent() {
+    fun idleIsSilent() {
         assertNull(t.onOutcome(UploadOutcome.Idle))
-        assertNull(t.onOutcome(UploadOutcome.Discarded(400)))
+        assertEquals(0, t.takeFailures())
+    }
+
+    @Test
+    fun discardedReportsReasonWithoutCountingAsFailure() {
+        val r = t.onOutcome(UploadOutcome.Discarded(400, "bad record"))!!
+        assertEquals("upload.discarded", r.first)
+        assertTrue(r.second.contains("400") && r.second.contains("bad record"))
+        assertEquals("upload.discarded", t.onOutcome(UploadOutcome.Discarded(422))!!.first)
         assertEquals(0, t.takeFailures())
     }
 }

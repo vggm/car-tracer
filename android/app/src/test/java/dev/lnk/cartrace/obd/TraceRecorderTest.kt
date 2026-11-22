@@ -30,6 +30,28 @@ class TraceRecorderTest {
     }
 
     @Test
+    fun escapesHighBytesAndC1Controls() {
+        assertEquals("\\xA0\\xFF\\x85\\x80", escapeRaw("\u00a0\u00ff\u0085\u0080"))
+        assertEquals("OK", escapeRaw("OK"))
+    }
+
+    @Test
+    fun longResponseKeepsDurationAndErrTail() = runTest {
+        var now = 0L
+        val rec = TraceRecorder(Fake("z".repeat(2000), advance = { now += it }), { now })
+        rec.begin("H")
+        rec.command("ATI")
+        val line = rec.lastExchanges(1).single()
+        assertTrue(line.length <= 600)
+        assertTrue(line.contains("…"))
+        assertTrue(line, line.endsWith(" | 800"))
+        val rec2 = TraceRecorder(Fake(error = IOException("timeout after 2000ms")), { 0L })
+        rec2.begin("H")
+        try { rec2.command("ATI") } catch (_: IOException) {}
+        assertTrue(rec2.lastExchanges(1).single().endsWith(" | ERR timeout after 2000ms"))
+    }
+
+    @Test
     fun recordsCommandResponseAndDuration() = runTest {
         var now = 0L
         val rec = TraceRecorder(Fake("ELM327 v1.5\r\r>", advance = { now += it }), { now })

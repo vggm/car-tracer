@@ -32,4 +32,12 @@ class InitVariantsTest {
         assertEquals(listOf("ATZ", "wait1000") + common + listOf("ATST FF", "ATKW0", "ATFI", "wait500"), render(InitVariant.V4))
         assertEquals(listOf("ATZ", "wait1000") + common + listOf("ATKW0", "ATFI", "ATSH 81 10 F1", "wait500"), render(InitVariant.V5))
     }
+
+    @Test
+    fun atfiUsesLongTimeout() {
+        for (v in listOf(InitVariant.V2, InitVariant.V3, InitVariant.V4, InitVariant.V5)) {
+            val atfi = commandsFor(v).filterIsInstance<Step.Cmd>().single { it.text == "ATFI" }
+            assertEquals(10_000L, atfi.timeoutMs)
+        }
+    }
 }
