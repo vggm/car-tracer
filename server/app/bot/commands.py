@@ -11,7 +11,7 @@ from app.scans import create_scan
 from app.route_map import render_route_png
 from app.journeys import find_journey, group_items, load_journeys, parse_journey_id
 from app.trip_text import format_journey_detail, format_trip_detail, format_trip_list, has_route, trip_list_keyboard
-from app.trips import PAGE_SIZE, get_trip, list_trips, parse_trip_ts, range_trips
+from app.trips import PAGE_SIZE, get_trip, list_trips, parse_trip_ts, trips_overlapping
 from app.vehicle import format_estado
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def _page_items(conn, before_ts):
     known = {t.id for t in trips}
     for j in journeys:  # complete a journey cut by the page margin
         if j.start_ts < oldest <= j.end_ts:
-            trips += [t for t in range_trips(conn, j.start_ts, j.end_ts) if t.id not in known]
+            trips += [t for t in trips_overlapping(conn, j.start_ts, j.end_ts) if t.id not in known]
     items = group_items(trips, journeys)
     return items[:PAGE_SIZE], more or len(items) > PAGE_SIZE
 
@@ -103,7 +103,7 @@ def _send_detail(client, chat_id, text: str, points, fetch_tile) -> None:
 def _send_journey(client, chat_id, conn, tz, journey_id: int, fetch_tile=None) -> None:
     journeys = load_journeys(conn)
     j = next((j for j in journeys if j.id == journey_id), None)
-    view = find_journey(range_trips(conn, j.start_ts, j.end_ts), journeys, journey_id) if j else None
+    view = find_journey(trips_overlapping(conn, j.start_ts, j.end_ts), journeys, journey_id) if j else None
     if view is None:
         client.send_message(chat_id, "Ese trayecto ya no está disponible.")
         return

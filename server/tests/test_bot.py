@@ -772,3 +772,20 @@ def test_journey_cut_at_page_edge_is_completed(conn):
     lines = [ln for ln in c.calls[0][2].splitlines() if "→" in ln]
     assert len(lines) == 2
     assert "5 tramos" in lines[0] and "3 tramos" in lines[1]
+
+
+def test_journey_detail_includes_late_records_beyond_stored_range(conn):
+    from app.trips import range_trips
+
+    journey_setup(conn)  # journey v1 = trips A+B
+    a, b, c_ = range_trips(conn, 0, 10**13)
+    b_end = b.end_ts
+    # late records right after B (gap < 120 s) extend B past the stored journey end
+    drive(conn, b_end + 60_000, 60, session="late", north0=5000 + 3000)
+    full_b = [t for t in range_trips(conn, 0, 10**13) if t.start_ts == b.start_ts][0]
+    assert full_b.end_ts > b_end
+    c = FakeClient()
+    run(cb("trip:v1"), conn, c)
+    text = c.calls[1][2]
+    km = f"{(a.distance_m + full_b.distance_m) / 1000:.1f}".replace(".", ",")
+    assert km in text, text

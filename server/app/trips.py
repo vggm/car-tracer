@@ -192,6 +192,15 @@ def range_trips(conn: sqlite3.Connection, min_ts: int, max_ts: int) -> list[Trip
     return [t for t in trips if t is not None]
 
 
+def trips_overlapping(conn: sqlite3.Connection, lo: int, hi: int) -> list[Trip]:
+    """Whole trips of every session group intersecting [lo, hi] (late records included)."""
+    for group in group_spans(session_spans(conn)):
+        g_lo, g_hi = min(s.min_ts for s in group), max(s.max_ts for s in group)
+        if g_lo <= hi and g_hi >= lo:
+            lo, hi = min(lo, g_lo), max(hi, g_hi)
+    return range_trips(conn, lo, hi)
+
+
 def parse_trip_ts(trip_id: str) -> int | None:
     """New ids are str(start_ts); legacy ones are '<session>:<ts>'."""
     ts = trip_id.rpartition(":")[2]
