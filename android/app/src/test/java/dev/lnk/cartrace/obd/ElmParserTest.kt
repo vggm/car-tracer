@@ -110,4 +110,12 @@ class ElmParserTest {
         assertFalse(ElmParser.hasGluedData("BUS INIT: ...OK\r41 00 BE 3E B8 13\r\r>"))
         assertFalse(ElmParser.hasGluedData("BUS INIT: OK\r41 00\r\r>"))
     }
+
+    @Test fun gluedDataAfterDotlessFastInitIsKept() {
+        val raw = "BUS INIT: OK41 00 BE 3E B8 13\r\r>"
+        assertEquals(listOf("4100BE3EB813"), ElmParser.clean(raw))
+        assertTrue(ElmParser.supportedPids(listOf(raw)).isNotEmpty())
+        assertTrue(ElmParser.hasGluedData(raw))
+        assertFalse(ElmParser.isError(raw))
+    }
 }
