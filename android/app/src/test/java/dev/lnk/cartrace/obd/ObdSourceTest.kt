@@ -36,7 +36,11 @@ private class ScriptedTransport(
     val timeouts: MutableMap<String, Long> = mutableMapOf(),
     val atrv: String = "12.6V\r\r>",
     val timeoutOn0100: String? = null,
+    /** Real transport behaviour: a timeout closes the socket, so later commands fail until open() again. */
+    val timeoutOnceOn: String? = null,
 ) : ElmTransport {
+    private var dead = false
+    private var timedOut = false
     var closed = false
     var failOn03 = false
     var answer03: String? = null
@@ -45,8 +49,14 @@ private class ScriptedTransport(
     var rpmAnswer = "41 0C 1A F8\r\r>"
     private var count = 0
     private var lastSp = ""
-    override suspend fun open() { openError?.let { throw it } }
+    override suspend fun open() { openError?.let { throw it }; dead = false }
     override suspend fun command(cmd: String, timeoutMs: Long): String {
+        if (dead) throw IOException("not open")
+        if (cmd == timeoutOnceOn && !timedOut) {
+            timedOut = true
+            dead = true
+            throw IOException("timeout after ${timeoutMs}ms waiting for $cmd")
+        }
         if (count++ >= failAfter) throw IOException(lostMessage)
         if (failOn03 && cmd == "03") throw IOException("link lost mid-scan")
         if (failOn04 && cmd == "04") throw IOException("link lost mid-clear")
@@ -87,9 +97,12 @@ class ObdSourceTest {
         emit = { r, _ -> records += r },
         sessionProvider = { session },
         nowMs = { currentTime },
+        delayFn = {},
     )
 
-    private fun events() = records.filterIsInstance<EventRecord>()
+    private fun events() = records.filterIsInstance<EventRecord>().filter { it.event != Events.OBD_TRACE }
+
+    private fun traces() = records.filterIsInstance<EventRecord>().filter { it.event == Events.OBD_TRACE }.map { it.detail!! }
 
     @Test
     fun initSequenceAndConnectedEvent() = runTest {
@@ -98,8 +111,8 @@ class ObdSourceTest {
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(
-            listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "0100", "0120", "0140", "ATDPN"),
-            log.take(10),
+            listOf("ATI", "AT@1", "ATDP", "ATDPN", "ATRV", "ATPPS", "0100", "ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "0100", "0120", "0140"),
+            log.take(16),
         )
         assertEquals(ObdState.Connected("A6"), src.state.value)
         assertEquals(listOf(Events.OBD_CONNECTED), events().map { it.event })
@@ -139,7 +152,7 @@ class ObdSourceTest {
         val src = source { ScriptedTransport(log) }
         val job = launch { src.run() }
         advanceTimeBy(125_000)
-        assertEquals(3, log.count { it == "ATRV" })
+        assertEquals(4, log.count { it == "ATRV" }) // 1 probe + 3 polls
         val obd = records.filterIsInstance<ObdRecord>()
         val withV = obd.count { it.values.containsKey("voltage_v") }
         assertEquals(3, withV)
@@ -276,7 +289,7 @@ class ObdSourceTest {
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(
-            "n=1 t=0s v=12.4V | 0: UNABLE TO CONNECT | 5: UNABLE TO CONNECT | 4: UNABLE TO CONNECT | 3: UNABLE TO CONNECT",
+            "n=1 t=0s v=12.4V | 0: UNABLE TO CONNECT | 5: UNABLE TO CONNECT | 4: UNABLE TO CONNECT | 3: UNABLE TO CONNECT var=V1",
             attempts().first(),
         )
         job.cancel()
@@ -300,10 +313,10 @@ class ObdSourceTest {
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(
-            "n=1 t=0s v=? | 0: timeout after 30000ms waiting for 0100",
+            "n=1 t=0s v=? | 0: timeout after 30000ms waiting for 0100 var=V1",
             attempts().single(),
         )
-        assertFalse(log.contains("ATRV"))
+        assertEquals(1, log.count { it == "ATRV" }) // only the probe's
         job.cancel()
     }
 
@@ -331,7 +344,7 @@ class ObdSourceTest {
         val job = launch { src.run() }
         advanceTimeBy(20_000)
         val connected = events().filter { it.event == Events.OBD_CONNECTED }.map { it.detail!! }
-        assertEquals("A6 n=2 t=5s", connected[0])
+        assertEquals("A6 n=2 t=5s var=V1", connected[0])
         assertTrue(connected[1].startsWith("A6 n=1 t="))
         job.cancel()
     }
@@ -365,6 +378,7 @@ class ObdSourceTest {
         protocolStore = store,
         adapterAddress = "AA:BB",
         protocolPreference = pref,
+        delayFn = {},
     )
 
     @Test
@@ -521,7 +535,7 @@ class ObdSourceTest {
     @Test
     fun ioErrorDuringFirstCandidatePropagatesWithoutFallback() = runTest {
         val log = mutableListOf<String>()
-        val src = sourceWith(MemStore()) { ScriptedTransport(log, failAfter = 3, lostMessage = "gone") }
+        val src = sourceWith(MemStore()) { ScriptedTransport(log, failAfter = 8, lostMessage = "gone") }
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(1, log.count { it == "ATZ" })
@@ -532,7 +546,7 @@ class ObdSourceTest {
     @Test
     fun firstPidSearchGetsThirtySeconds() = runTest {
         val timeouts = mutableMapOf<String, Long>()
-        val src = source { ScriptedTransport(mutableListOf(), timeouts = timeouts) }
+        val src = source { ScriptedTransport(mutableListOf(), timeouts = timeouts, dpn = "0") }
         val job = launch { src.run() }
         advanceTimeBy(100)
         assertEquals(30_000L, timeouts["0100"])
@@ -853,6 +867,299 @@ class ObdSourceTest {
         advanceTimeBy(500)
         val lost = events().first { it.event == Events.OBD_LOST }
         assertEquals(200, lost.detail!!.length)
+        job.cancel()
+    }
+
+    // ---- probe, variants and trace (app 0.1.7) ----
+
+    private fun TestScope.prefSource(pref: String, factory: () -> ElmTransport) = sourceWith(MemStore(), pref, factory)
+
+    @Test
+    fun probeRunsBeforeAtz() = runTest {
+        val log = mutableListOf<String>()
+        val src = source { ScriptedTransport(log, dpn = "0") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(listOf("ATI", "AT@1", "ATDP", "ATDPN", "ATRV", "ATPPS", "ATZ"), log.take(7))
+        job.cancel()
+    }
+
+    @Test
+    fun probeUsesTwoSecondTimeout() = runTest {
+        val timeouts = mutableMapOf<String, Long>()
+        val src = source { ScriptedTransport(mutableListOf(), timeouts = timeouts) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(2_000L, timeouts["ATI"])
+        assertEquals(2_000L, timeouts["ATPPS"])
+        job.cancel()
+    }
+
+    @Test
+    fun atppsOnlyOnFirstAttempt() = runTest {
+        val logs = mutableListOf<MutableList<String>>()
+        val src = source {
+            val l = mutableListOf<String>()
+            logs += l
+            ScriptedTransport(l, on0100 = "UNABLE TO CONNECT\r\r>")
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(5_100)
+        assertTrue(logs.size >= 2)
+        assertTrue(logs[0].contains("ATPPS"))
+        assertFalse(logs[1].contains("ATPPS"))
+        job.cancel()
+    }
+
+    @Test
+    fun probe0100WhenProtocolDetermined() = runTest {
+        for ((dpn, expected) in listOf("A5" to true, "5" to true, "0" to false, "A0" to false, "ATDPN\rA0" to false, "ATDPN\r5" to true)) {
+            val log = mutableListOf<String>()
+            val src = source { ScriptedTransport(log, dpn = dpn, failAfter = 9) }
+            val job = launch { src.run() }
+            advanceTimeBy(100)
+            assertEquals("dpn=$dpn", expected, log.take(7).contains("0100"))
+            job.cancel()
+        }
+    }
+
+    @Test
+    fun atppsIsSharedAcrossInstances() = runTest {
+        val flag = java.util.concurrent.atomic.AtomicBoolean(false)
+        val logs = mutableListOf<MutableList<String>>()
+        repeat(2) {
+            val l = mutableListOf<String>()
+            logs += l
+            val src = ObdSource(
+                transportFactory = { ScriptedTransport(l) },
+                clocks = FakeClocks(),
+                emit = { r, _ -> records += r },
+                sessionProvider = { session },
+                nowMs = { currentTime },
+                delayFn = {},
+                probeOnce = flag,
+            )
+            val job = launch { src.run() }
+            advanceTimeBy(100)
+            job.cancel()
+        }
+        assertTrue(logs[0].contains("ATPPS"))
+        assertFalse(logs[1].contains("ATPPS"))
+    }
+
+    @Test
+    fun probeTimeoutReopensAndStillRunsVariant() = runTest {
+        val log = mutableListOf<String>()
+        val src = prefSource("5") { ScriptedTransport(log, dpn = "5", timeoutOnceOn = "0100") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.contains("ATZ"))
+        assertTrue(log.indexOf("ATSP5") > log.indexOf("ATDPN"))
+        val first = traces().first()
+        assertTrue(first.contains("result=ok"))
+        assertEquals(2, first.lines().count { it.contains("> open |") })
+        assertTrue(first.contains("probe failed"))
+        job.cancel()
+    }
+
+    @Test
+    fun probeTimeoutWithFailingReopenFailsTheAttemptTraced() = runTest {
+        var opens = 0
+        val src = source {
+            object : ElmTransport {
+                val inner = ScriptedTransport(mutableListOf(), dpn = "5", timeoutOnceOn = "0100")
+                override suspend fun open() { if (opens++ > 0) throw IOException("reopen refused"); inner.open() }
+                override suspend fun command(cmd: String, timeoutMs: Long) = inner.command(cmd, timeoutMs)
+                override fun close() = inner.close()
+            }
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(attempts().first().contains("open: reopen refused"))
+        assertTrue(traces().first().contains("result=fail"))
+        job.cancel()
+    }
+
+    @Test
+    fun atfiQuestionMarkDoesNotCountTowardsObdError() = runTest {
+        val sid = (1..500).map { "q$it" }.first { variantFor(it, 1) == InitVariant.V2 }
+        val src = ObdSource(
+            transportFactory = {
+                object : ElmTransport {
+                    val inner = ScriptedTransport(mutableListOf(), dpn = "5")
+                    override suspend fun open() = inner.open()
+                    override suspend fun command(cmd: String, timeoutMs: Long) =
+                        if (cmd == "ATFI") "?\r\r>" else inner.command(cmd, timeoutMs)
+                    override fun close() = inner.close()
+                }
+            },
+            clocks = FakeClocks(),
+            emit = { r, _ -> records += r },
+            sessionProvider = { Session(sid) },
+            nowMs = { currentTime },
+            protocolPreference = "5",
+            delayFn = {},
+        )
+        val job = launch { src.run() }
+        advanceTimeBy(5_000 + 10_000 + 1_000)
+        assertEquals(3, attempts().size)
+        assertEquals(0, events().count { it.event == Events.OBD_ERROR })
+        job.cancel()
+    }
+
+    @Test
+    fun lostTraceIsTruncatedInTheMiddleKeepingTheError() = runTest {
+        val src = source {
+            object : ElmTransport {
+                val inner = ScriptedTransport(mutableListOf(), failAfter = 40, lostMessage = "link lost")
+                override suspend fun open() = inner.open()
+                override suspend fun command(cmd: String, timeoutMs: Long) =
+                    inner.command(cmd, timeoutMs).replace("\r\r>", "Y".repeat(700) + "\r\r>")
+                override fun close() = inner.close()
+            }
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(500)
+        val trace = traces().last()
+        assertTrue(trace.length <= 4000)
+        assertEquals("lost", trace.lineSequence().first())
+        assertTrue(trace.contains("líneas omitidas"))
+        assertTrue(trace.lines().last().contains("ERR link lost"))
+        job.cancel()
+    }
+
+    @Test
+    fun probeFailureDoesNotAbortAttempt() = runTest {
+        val log = mutableListOf<String>()
+        val src = source {
+            object : ElmTransport {
+                val inner = ScriptedTransport(log)
+                override suspend fun open() = inner.open()
+                override suspend fun command(cmd: String, timeoutMs: Long): String {
+                    if (cmd == "ATI" || cmd == "ATPPS") throw IOException("probe timeout")
+                    return inner.command(cmd, timeoutMs)
+                }
+                override fun close() = inner.close()
+            }
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.contains("ATZ"))
+        job.cancel()
+    }
+
+    @Test
+    fun traceEmittedForFailedAndSuccessfulAttempts() = runTest {
+        var n = 0
+        val src = source { if (n++ == 0) ScriptedTransport(mutableListOf(), on0100 = "UNABLE TO CONNECT\r\r>") else ScriptedTransport(mutableListOf()) }
+        val job = launch { src.run() }
+        advanceTimeBy(5_100)
+        val t = traces()
+        assertTrue(t[0].lineSequence().first().let { it.startsWith("attempt n=1 variant=V1 result=fail session_age=0s") })
+        assertTrue(t[1].lineSequence().first().let { it.startsWith("attempt n=2 variant=V1 result=ok session_age=5s") })
+        assertTrue(t[0].contains("> ATZ"))
+        assertTrue(t[0].length <= 4000)
+        job.cancel()
+    }
+
+    @Test
+    fun gluedDataIsFlaggedInTraceHeader() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "BUS INIT: ...OK41 00 18 38 80 01\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(traces().first().lineSequence().first().contains("glued=1"))
+        job.cancel()
+    }
+
+    @Test
+    fun attemptEventsCarryVariant() = runTest {
+        var n = 0
+        val src = prefSource("5") { if (n++ == 0) ScriptedTransport(mutableListOf(), dpn = "5", on0100 = "UNABLE TO CONNECT\r\r>") else ScriptedTransport(mutableListOf(), dpn = "5") }
+        val job = launch { src.run() }
+        advanceTimeBy(5_100)
+        val v1 = variantFor("s1", 1)
+        val v2 = variantFor("s1", 2)
+        assertTrue(attempts().first().endsWith(" var=$v1"))
+        assertTrue(events().first { it.event == Events.OBD_CONNECTED }.detail!!.endsWith(" var=$v2"))
+        assertTrue(traces()[0].startsWith("attempt n=1 variant=$v1"))
+        job.cancel()
+    }
+
+    @Test
+    fun longAttemptDetailKeepsVariantWithin200() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), on0100 = "7F0112".repeat(30) + "\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val d = attempts().first()
+        assertEquals(200, d.length)
+        assertTrue(d.endsWith(" var=V1"))
+        job.cancel()
+    }
+
+    @Test
+    fun lostEmitsTraceBeforeObdLost() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), failAfter = 30, lostMessage = "link lost") }
+        val job = launch { src.run() }
+        advanceTimeBy(500)
+        val all = records.filterIsInstance<EventRecord>().map { it.event }
+        val lostIdx = all.indexOf(Events.OBD_LOST)
+        assertEquals(Events.OBD_TRACE, all[lostIdx - 1])
+        val trace = traces().last()
+        assertEquals("lost", trace.lineSequence().first())
+        assertTrue(trace.lines().size - 1 <= 20)
+        assertTrue(trace.contains("ERR link lost"))
+        job.cancel()
+    }
+
+    @Test
+    fun variantV5SendsPhysicalHeaderAfterFastInit() = runTest {
+        val sid = (1..200).map { "sess$it" }.first { variantFor(it, 1) == InitVariant.V5 }
+        val log = mutableListOf<String>()
+        val src = ObdSource(
+            transportFactory = { ScriptedTransport(log, dpn = "5") },
+            clocks = FakeClocks(),
+            emit = { r, _ -> records += r },
+            sessionProvider = { Session(sid) },
+            nowMs = { currentTime },
+            protocolPreference = "5",
+            delayFn = {},
+        )
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val fi = log.indexOf("ATFI")
+        assertTrue(fi > 0)
+        assertEquals("ATSH 81 10 F1", log[fi + 1])
+        assertEquals("0100", log[fi + 2])
+        job.cancel()
+    }
+
+    @Test
+    fun atfiErrorFailsTheAttempt() = runTest {
+        val sid = (1..200).map { "sess$it" }.first { variantFor(it, 1) == InitVariant.V2 }
+        val log = mutableListOf<String>()
+        val src = ObdSource(
+            transportFactory = {
+                object : ElmTransport {
+                    val inner = ScriptedTransport(log, dpn = "5")
+                    override suspend fun open() = inner.open()
+                    override suspend fun command(cmd: String, timeoutMs: Long) =
+                        if (cmd == "ATFI") "BUS INIT: ...ERROR\r\r>" else inner.command(cmd, timeoutMs)
+                    override fun close() = inner.close()
+                }
+            },
+            clocks = FakeClocks(),
+            emit = { r, _ -> records += r },
+            sessionProvider = { Session(sid) },
+            nowMs = { currentTime },
+            protocolPreference = "5",
+            delayFn = {},
+        )
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(attempts().first().contains("5: BUS INIT ERROR"))
+        assertTrue(traces().first().contains("result=fail"))
         job.cancel()
     }
 }
