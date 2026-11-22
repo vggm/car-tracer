@@ -626,3 +626,26 @@ a.mp-btn:hover { background: var(--surface-2); }
 }
 .chip:hover { color: var(--text); border-color: var(--muted); }
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* trip detail: range selection */
+.chart-head { display: flex; align-items: center; justify-content: space-between; gap: 0.667rem; }
+.sel-mode {
+  display: none;
+  padding: 0.333rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.867rem;
+  cursor: pointer;
+}
+.sel-mode[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+@media (pointer: coarse) { .sel-mode { display: inline-block; } }
+.charts.selecting .u-over { touch-action: none; }
+.charts .u-select { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.533rem; margin: 0 0 0.667rem; }
+.sel-head[hidden] { display: none; }
+.sel-title { font-weight: 600; font-variant-numeric: tabular-nums; }
+.sel-clear { color: var(--accent); font-size: 0.933rem; text-decoration: none; }
+.sel-clear:hover { text-decoration: underline; }

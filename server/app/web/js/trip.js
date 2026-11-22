@@ -2,6 +2,7 @@ import { ApiError, getJSON, deleteJSON } from "./api.js";
 import { el, card, stat, emptyState, load } from "./ui.js";
 import { onThemeChange } from "./theme.js";
 import { addBasemap } from "./basemap.js";
+import { rangeStats } from "./selection.js";
 import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 
 const nil = (x) => x === null || x === undefined;
@@ -134,7 +135,7 @@ export async function render(main, params, query) {
       if (range) {
         const inside = pts.filter((p) => p[2] >= range.t0 && p[2] <= range.t1).map((p) => [p[0], p[1]]);
         if (inside.length >= 2) {
-          highlight = L.polyline(inside, { color: cssVar("--text"), weight: 6, opacity: 0.9, interactive: false, className: "seg-focus" }).addTo(map);
+          highlight = L.polyline(inside, { color: cssVar("--accent"), weight: 7, opacity: 0.95, interactive: false, className: "seg-focus" }).addTo(map);
           fitTo(inside);
           return;
         }
@@ -146,7 +147,20 @@ export async function render(main, params, query) {
     // opts.journey: true cuando son las del viaje entero (muestra «Al volante» y «Duración total»).
     // Tarea 7 la llamará con las cifras de un rango.
     const statsHost = el("div", { class: "stats trip-stats" });
+    // Selección de un intervalo en la gráfica: título y enlace para quitarla.
+    let ranged = false;
+    const selTitle = el("span", { class: "sel-title" });
+    const selHead = el("div", { class: "sel-head", hidden: true }, selTitle,
+      el("a", { class: "sel-clear", href: "#", onclick: (e) => { e.preventDefault(); clearSelection(); } }, "Quitar selección"));
     const showStats = (o, opts = {}) => {
+      if (opts.range) {
+        statsHost.replaceChildren(
+          stat("Distancia", `≈ ${n1(o.km)}`, "km"),
+          stat("Duración", dur(o.duration_ms)),
+          stat("Media", n0(o.avg_kmh), "km/h"),
+          stat("Máxima", nil(o.max_kmh) ? "—" : n0(o.max_kmh), nil(o.max_kmh) ? "" : "km/h"));
+        return;
+      }
       statsHost.replaceChildren(
         stat("Distancia", n1(o.km), "km"),
         ...(opts.journey
@@ -200,7 +214,7 @@ export async function render(main, params, query) {
       fitTo(ll);
       recolor = () => {
         paintLines();
-        if (highlight) highlight.setStyle({ color: cssVar("--text") });
+        if (highlight) highlight.setStyle({ color: cssVar("--accent") });
         start.setStyle({ fillColor: cssVar("--ok"), color: cssVar("--bg") });
         end.setStyle({ fillColor: cssVar("--bad"), color: cssVar("--bg") });
         stopDots.forEach((m) => m.setStyle({ fillColor: cssVar("--warn"), color: cssVar("--bg") }));
@@ -210,6 +224,25 @@ export async function render(main, params, query) {
 
     // Chips de tramo (solo con 2 o más): «Todo» y uno por tramo. El estado vive en el hash (?tramo=i, 1-based).
     let chipEls = [];
+    const clearSelection = (restore = true) => {
+      const u = charts[0];
+      if (u && u.select && u.select.width > 0) u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+      if (!ranged) return;
+      ranged = false;
+      selHead.hidden = true;
+      if (!restore) return;
+      focus(null);
+      showStats(sel === null ? model.top : segments[sel], { journey: sel === null && isJourney });
+    };
+    // Aplica un intervalo {t0, t1} (ms): resalta y encuadra en el mapa, y muestra sus cifras aproximadas.
+    const applySelection = (t0, t1) => {
+      ranged = true;
+      focus({ t0, t1 });
+      const r = rangeStats(pts, model.series, t0, t1);
+      selTitle.textContent = `Selección ${hhmm(t0)}–${hhmm(t1)}`;
+      selHead.hidden = false;
+      showStats({ ...r, duration_ms: t1 - t0 }, { range: true });
+    };
     const select = (i) => {
       sel = i;
       chipEls.forEach((c, k) => {
@@ -219,6 +252,7 @@ export async function render(main, params, query) {
       });
       paintLines();
       focus(null);
+      clearSelection(false);
       showStats(i === null ? model.top : segments[i], { journey: i === null && isJourney });
       applyRange();
       history.replaceState(null, "", `#/viaje/${encodeURIComponent(id)}${i === null ? "" : `?tramo=${i + 1}`}`);
@@ -231,7 +265,7 @@ export async function render(main, params, query) {
     }
 
     showStats(model.top, { journey: isJourney });
-    main.append(card(null, statsHost));
+    main.append(card(null, selHead, statsHost));
     if (chipEls.length) {
       const q = parseInt(query && query.get("tramo"), 10);
       select(q >= 1 && q <= segments.length ? q - 1 : null);
@@ -250,8 +284,14 @@ export async function render(main, params, query) {
     if (!s || !s.ts || s.ts.length < 2) return;
     const xs = s.ts.map((v) => v / 1000);
     const hasRpm = filled(s.rpm), hasCool = filled(s.coolant_c);
+    let selectMode = false;
+    const selBtn = el("button", {
+      class: "sel-mode", type: "button", "aria-pressed": "false",
+      onclick: () => setSelectMode(!selectMode),
+    }, "Seleccionar");
     const box = el("div", { class: "card charts" },
-      el("h2", { class: "card-title" }, hasRpm ? "Velocidad y rpm" : "Velocidad"),
+      el("div", { class: "chart-head" },
+        el("h2", { class: "card-title" }, hasRpm ? "Velocidad y rpm" : "Velocidad"), selBtn),
       el("div", { class: "chart", "data-chart": "main" }));
     let coolBox = null;
     if (hasCool) {
@@ -261,6 +301,17 @@ export async function render(main, params, query) {
     if (!t.has_obd) box.append(el("p", { class: "chart-note" }, "Sin datos del motor en este trayecto"));
     main.append(box);
 
+    const setSelectMode = (on) => {
+      selectMode = on;
+      selBtn.setAttribute("aria-pressed", String(on));
+      box.classList.toggle("selecting", on);
+    };
+    // Convierte la selección de uPlot en un intervalo y lo aplica.
+    const pick = (u) => {
+      const { left, width } = u.select;
+      if (!(width > 0)) return;
+      applySelection(Math.round(u.posToVal(left, "x") * 1000), Math.round(u.posToVal(left + width, "x") * 1000));
+    };
     const tzDate = (ts) => uPlot.tzDate(new Date(ts * 1000), TZ);
     const cursorSync = () => ({ sync: { key: SYNC }, drag: { x: false, y: false }, points: { size: 7 } });
     const setCursor = (u) => {
@@ -288,13 +339,29 @@ export async function render(main, params, query) {
           });
           u.over.append(tip);
           // Táctil: arrastrar el dedo mueve el cursor (uPlot solo reacciona al ratón).
+          let x0 = null;
           const touch = (e) => {
             const t = e.touches[0], r = u.over.getBoundingClientRect();
             if (!t) return;
+            if (selectMode && u === charts[0]) { // modo «Seleccionar»: el arrastre dibuja el intervalo
+              const x = Math.max(0, Math.min(u.over.clientWidth, t.clientX - r.left));
+              if (e.type === "touchstart") x0 = x;
+              if (x0 === null) return;
+              u.setSelect({ left: Math.min(x0, x), width: Math.abs(x - x0), top: 0, height: u.over.clientHeight });
+              return;
+            }
             const left = t.clientX - r.left;
             u.setCursor({ left, top: t.clientY - r.top }, true, true); // pub=true: cursor.sync lo publica a los demás gráficos
           };
-          const off = () => u.setCursor({ left: -10, top: -10 }, true, true);
+          const off = (e) => {
+            if (selectMode && u === charts[0]) {
+              if (e.type === "touchend" && x0 !== null && u.select.width > 0) pick(u);
+              x0 = null;
+              setSelectMode(false);
+              return;
+            }
+            u.setCursor({ left: -10, top: -10 }, true, true);
+          };
           u.over.addEventListener("touchstart", touch, { passive: true });
           u.over.addEventListener("touchmove", touch, { passive: true });
           u.over.addEventListener("touchend", off);
@@ -361,7 +428,8 @@ export async function render(main, params, query) {
       const base = { tzDate, legend: { show: false }, scales: { x: { time: true } }, hooks: { setCursor: [setCursor], drawClear: [stopBands.hooks.drawClear] } };
 
       const main1 = {
-        ...base, width: width(), height: Math.round(H_MAIN * px), cursor: cursorSync(), plugins: [tooltip(rowsMain())],
+        ...base, width: width(), height: Math.round(H_MAIN * px), cursor: { ...cursorSync(), drag: { x: true, y: false, setScale: false } }, plugins: [tooltip(rowsMain())],
+        hooks: { ...base.hooks, setSelect: [(u) => { if (!selectMode && u.select.width > 0) pick(u); }] },
         series: [{}, { label: "km/h", stroke: accent, width: 2, scale: "kmh", spanGaps: false },
           ...(hasRpm ? [{ label: "rpm", stroke: muted, width: 1.5, scale: "rpm", spanGaps: false }] : [])],
         scales: { x: { time: true }, kmh: { range: (u, lo, hi) => [0, Math.max(hi, 10)] }, rpm: { range: (u, lo, hi) => [0, Math.max(hi, 1000)] } },
