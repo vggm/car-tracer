@@ -6,7 +6,7 @@ def test_connect_is_idempotent(tmp_path):
     c1 = connect(p)
     c1.close()
     c2 = connect(p)
-    assert c2.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+    assert c2.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
     assert c2.execute("SELECT count(*) FROM records").fetchone() == (0,)
 
 
@@ -33,9 +33,9 @@ def test_migration_adds_kind_to_old_database(tmp_path):
     assert c.execute("SELECT id, requested_at, kind FROM scan_requests").fetchall() == [
         ("old", 5, "read_dtc")
     ]
-    assert c.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+    assert c.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
     c.close()
     c = connect(p)
     assert c.execute("SELECT count(*) FROM scan_requests").fetchone() == (1,)
-    assert c.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+    assert c.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
     assert c.execute("SELECT count(*) FROM clear_confirmations").fetchone() == (0,)

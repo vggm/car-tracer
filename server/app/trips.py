@@ -33,6 +33,7 @@ class Trip:
     rpm_max: float | None
     new_dtcs: list[str] | None
     points: list[GpsPoint]
+    rpm_n: int = 0  # samples with rpm > 0
 
     @property
     def duration_ms(self) -> int:
@@ -138,6 +139,7 @@ def _build(conn: sqlite3.Connection, rows: list[tuple[int, str, dict]]) -> Trip 
         rpm_max=max(running) if running else None,
         new_dtcs=new_dtcs,
         points=points,
+        rpm_n=len(running),
     )
 
 
