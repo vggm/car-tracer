@@ -1,18 +1,17 @@
-"""In-memory cache of computed trips, one entry per session.
+"""In-memory cache of computed trips, recomputed from the records on every snapshot.
 
 Cached trips carry no GPS points (memory); use trips.get_trip for the full trip."""
 import dataclasses
 import sqlite3
 import threading
 
-from app.trips import Trip, session_trips
+from app.trips import Trip, group_spans, range_trips, session_spans
 
 
 class TripCache:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # session_id -> ((record count, max ts), trips oldest first)
-        self._sessions: dict[str, tuple[tuple[int, int], list[Trip]]] = {}
+        self._last: tuple[list[Trip], tuple] | None = None
 
     def all_trips(self, conn: sqlite3.Connection) -> list[Trip]:
         """Every trip, newest first by start_ts. Only changed sessions are recomputed."""
@@ -20,22 +19,17 @@ class TripCache:
 
     def snapshot(self, conn: sqlite3.Connection) -> tuple[list[Trip], tuple]:
         """Like all_trips, plus a fingerprint that changes whenever any session changes."""
-        keys = {
-            sid: (count, max_ts)
-            for sid, count, max_ts in conn.execute(
-                "SELECT session_id, count(*), max(ts) FROM records GROUP BY session_id"
-            )
-        }
-        with self._lock:
-            for sid in [s for s in self._sessions if s not in keys]:
-                del self._sessions[sid]
-            for sid, key in keys.items():
-                cached = self._sessions.get(sid)
-                if cached is None or cached[0] != key:
-                    self._sessions[sid] = (key, [dataclasses.replace(t, points=[]) for t in session_trips(conn, sid)])
-            trips = [t for _, ts in self._sessions.values() for t in ts]
+        spans = session_spans(conn)
+        trips = [
+            dataclasses.replace(t, points=[])
+            for group in group_spans(spans)
+            for t in range_trips(conn, min(s.min_ts for s in group), max(s.max_ts for s in group))
+        ]
         trips.sort(key=lambda t: t.start_ts, reverse=True)
-        return trips, tuple(sorted(keys.items()))
+        result = (trips, tuple(sorted((s.session_id, (s.count, s.max_ts)) for s in spans)))
+        with self._lock:
+            self._last = result
+        return result
 
     def get(self, conn: sqlite3.Connection, trip_id: str) -> Trip | None:
         for trip in self.all_trips(conn):

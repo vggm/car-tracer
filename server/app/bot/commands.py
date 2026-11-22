@@ -10,7 +10,7 @@ from app.location import car_status, format_status
 from app.scans import create_scan
 from app.route_map import render_route_png
 from app.trip_text import format_trip_detail, format_trip_list, has_route, trip_list_keyboard
-from app.trips import get_trip, list_trips
+from app.trips import get_trip, list_trips, parse_trip_ts
 from app.vehicle import format_estado
 
 log = logging.getLogger(__name__)
@@ -67,8 +67,7 @@ def _send_trip_text(client, chat_id, text: str) -> None:
 
 
 def _send_trip(client, chat_id, conn, tz, trip_id: str, fetch_tile=None) -> None:
-    _, sep, start = trip_id.rpartition(":")
-    if not sep or not start.isdigit():
+    if parse_trip_ts(trip_id) is None:
         return  # malformed
     trip = get_trip(conn, trip_id)
     if trip is None:

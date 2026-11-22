@@ -17,7 +17,7 @@ def ms(y, mo, d, h, mi):
 
 def mk(id_, start, end, km=6.3, **kw):
     base = dict(
-        id=id_, session_id="s", start_ts=start, end_ts=end, distance_m=km * 1000,
+        id=id_, start_ts=start, end_ts=end, distance_m=km * 1000,
         max_kmh=62.0, has_obd=True, idle_ms=3 * 60_000, coolant_start=40.0,
         coolant_max=87.0, rpm_avg=1450.0, rpm_max=3200.0, new_dtcs=[], points=[],
     )

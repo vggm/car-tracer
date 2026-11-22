@@ -42,18 +42,6 @@ def drive(conn, start_ts, seconds, speed=10.0, session="s1", rpm=1500, north0=0.
             obd(conn, ts, session=session, rpm=rpm, speed_kmh=speed * 3.6)
 
 
-def _counting(monkeypatch):
-    calls = []
-    real = trip_cache.session_trips
-
-    def counted(conn, session_id):
-        calls.append(session_id)
-        return real(conn, session_id)
-
-    monkeypatch.setattr(trip_cache, "session_trips", counted)
-    return calls
-
-
 def test_all_trips_matches_list_trips(tmp_path):
     conn = _conn(tmp_path)
     drive(conn, 0, 300)
@@ -64,27 +52,14 @@ def test_all_trips_matches_list_trips(tmp_path):
     assert got == [t.id for t in list_trips(conn, limit=100)[0]]
 
 
-def test_closed_session_not_recomputed(tmp_path, monkeypatch):
-    conn = _conn(tmp_path)
-    drive(conn, 0, 300)
-    drive(conn, 2_000_000, 300, session="s2")
-    calls = _counting(monkeypatch)
-    cache = TripCache()
-    cache.all_trips(conn)
-    cache.all_trips(conn)
-    assert len(calls) == 2
-
-
-def test_cache_picks_up_new_records_in_open_session(tmp_path, monkeypatch):
+def test_cache_picks_up_new_records_in_open_session(tmp_path):
     conn = _conn(tmp_path)
     drive(conn, 0, 300)
     drive(conn, 2_000_000, 300, session="s2")
     cache = TripCache()
     cache.all_trips(conn)
     drive(conn, 310_000, 300, north0=3000)
-    calls = _counting(monkeypatch)
-    trips = [t for t in cache.all_trips(conn) if t.session_id == "s1"]
-    assert calls == ["s1"]
+    trips = [t for t in cache.all_trips(conn) if t.start_ts == 0]
     assert len(trips) == 1 and trips[0].end_ts == 610_000
 
 
@@ -96,6 +71,7 @@ def test_get_returns_trip_and_none_for_unknown(tmp_path):
     assert cache.get(conn, trip.id) == trip
     assert cache.get(conn, "nope") is None
     assert cache.get(conn, "s1:999") is None
+    assert cache.get(conn, "999") is None
 
 
 def test_cached_trips_do_not_hold_points(tmp_path):

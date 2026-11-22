@@ -41,9 +41,9 @@ def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 
 
-def _trip_id(trips: list[Trip], session_id: str, ts: int) -> str | None:
+def _trip_id(trips: list[Trip], ts: int) -> str | None:
     for t in trips:
-        if t.session_id == session_id and t.start_ts <= ts <= t.end_ts:
+        if t.start_ts <= ts <= t.end_ts:
             return t.id
     return None
 
@@ -71,7 +71,7 @@ def _new_dtc(conn, trips, since) -> list[Alert]:
                 title = ("Avería nueva: " if len(new) == 1 else "Averías nuevas: ") + ", ".join(new)
                 out.append(Alert(
                     f"new_dtc:{session_id}:{ts}", "new_dtc", "high", ts, title,
-                    "; ".join(describe(c) for c in new), _trip_id(trips, session_id, ts),
+                    "; ".join(describe(c) for c in new), _trip_id(trips, ts),
                 ))
         previous = codes
     return out
@@ -80,7 +80,7 @@ def _new_dtc(conn, trips, since) -> list[Alert]:
 def _overheat(trips, since, tz) -> list[Alert]:
     return [
         Alert(
-            f"overheat:{t.session_id}:{t.start_ts}", "overheat", "high", t.start_ts,
+            f"overheat:{t.id}", "overheat", "high", t.start_ts,
             f"Motor caliente: {fmt.num(t.coolant_max)} °C",
             f"Trayecto del {_lower_first(fmt.full_day(t.start_ts, tz))} a las {fmt.hhmm(t.start_ts, tz)}",
             t.id,
@@ -93,7 +93,7 @@ def _overheat(trips, since, tz) -> list[Alert]:
 def _no_obd(trips, since, tz) -> list[Alert]:
     return [
         Alert(
-            f"no_obd:{t.session_id}:{t.start_ts}", "no_obd", "info", t.start_ts,
+            f"no_obd:{t.id}", "no_obd", "info", t.start_ts,
             "Trayecto sin datos del motor",
             f"{fmt.num(t.distance_m / 1000, 1)} km · {_lower_first(fmt.full_day(t.start_ts, tz))}"
             f" a las {fmt.hhmm(t.start_ts, tz)}",
@@ -130,7 +130,7 @@ def _obd_alerts(conn, trips, since, now_ms, tz) -> list[Alert]:
             f"battery_low:{session_id}:{ts}", "battery_low", "warn", ts,
             f"Batería baja: {fmt.num(v, 1)} V",
             f"Con el motor parado, {fmt.when(ts, now_ms, tz)}",
-            _trip_id(trips, session_id, ts),
+            _trip_id(trips, ts),
         ))
 
     def bad(v: float) -> bool:
@@ -144,7 +144,7 @@ def _obd_alerts(conn, trips, since, now_ms, tz) -> list[Alert]:
                     f"Carga anómala: {fmt.num(v1, 1)} V en marcha",
                     f"Lo normal en marcha es entre {fmt.num(CHARGE_MIN_V, 1)} y "
                     f"{fmt.num(CHARGE_MAX_V, 1)} V",
-                    _trip_id(trips, session_id, t1),
+                    _trip_id(trips, t1),
                 ))
                 break
     return out
@@ -161,7 +161,7 @@ def _stale(conn, trips, now_ms, tz) -> list[Alert]:
     return [Alert(
         f"stale:{session_id}:{ts}", "stale", "info", ts,
         f"Sin datos desde hace {days} días",
-        f"Último dato: {fmt.when(ts, now_ms, tz)}", _trip_id(trips, session_id, ts),
+        f"Último dato: {fmt.when(ts, now_ms, tz)}", _trip_id(trips, ts),
     )]
 
 

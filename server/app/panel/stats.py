@@ -121,9 +121,9 @@ def _series(conn: sqlite3.Connection, trip: Trip) -> dict:
     rows = [
         (ts, (json.loads(d).get("values") or {}))
         for ts, d in conn.execute(
-            "SELECT ts, data FROM records WHERE type='obd' AND session_id=?"
+            "SELECT ts, data FROM records WHERE type='obd'"
             " AND ts BETWEEN ? AND ? ORDER BY ts, seq",
-            (trip.session_id, trip.start_ts, trip.end_ts),
+            (trip.start_ts, trip.end_ts),
         )
     ]
     if any(v.get("speed_kmh") is not None for _, v in rows):
