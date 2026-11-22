@@ -58,6 +58,15 @@ def test_join_twice_same_id(setup):
     assert conn.execute("SELECT count(*) FROM journeys").fetchone()[0] == 1
 
 
+def test_join_already_covered_keeps_id(setup):
+    conn, (a, b, c) = setup
+    join(conn, [a, b, c], a.id, b.id, 1)
+    jid = join(conn, [a, b, c], b.id, c.id, 2)
+    assert conn.execute("SELECT count(*) FROM journeys").fetchone()[0] == 1
+    assert join(conn, [a, b, c], a.id, b.id, 3) == jid
+    assert conn.execute("SELECT count(*), max(created_at) FROM journeys").fetchone() == (1, 2)
+
+
 def test_join_not_consecutive_raises(setup):
     conn, (a, b, c) = setup
     with pytest.raises(ValueError):
@@ -117,6 +126,7 @@ def test_combined_stats(tmp_path):
     assert v.new_dtcs is None
     assert v.max_kmh == max(a.max_kmh, b.max_kmh)
     assert v.rpm_max == 2000
+    assert v.avg_kmh == pytest.approx(v.distance_m / (v.drive_ms / 1000.0) * 3.6)
 
 
 def test_join_works_with_cache_style_trips(setup):

@@ -169,7 +169,7 @@ def join(conn: sqlite3.Connection, trips: list[Trip], id_a: str, id_b: str, now_
             "SELECT id, start_ts, end_ts FROM journeys WHERE start_ts <= ? AND end_ts >= ?", (hi, lo)
         ).fetchall()
         for jid, s, e in overlapped:
-            if (s, e) == (lo, hi):
+            if s <= lo and e >= hi:
                 conn.execute("COMMIT")
                 return jid
         for _, s, e in overlapped:
