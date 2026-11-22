@@ -1,4 +1,6 @@
+import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -12,22 +14,33 @@ from app.config import Settings
 from app.db import ThreadLocalConnections, connect
 from app.funnel_guard import FunnelGuardMiddleware
 from app.ingest import router
+from app.panel import api as panel_api
 from app.panel.api import router as panel_router
 from app.panel.tiles import tiles_router
 from app.tiles import TileCache
 from app.trip_cache import TripCache
 
 WEB_DIR = Path(__file__).parent / "web"
+log = logging.getLogger(__name__)
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _warm(app: FastAPI) -> None:
+    """Fill the trip cache and alerts memo so the first panel request is fast."""
+    try:
+        panel_api._alerts(app.state, app.state.readers.get())
+    except Exception:
+        log.exception("cache warm-up failed")
+
+
 def create_app(
     settings: Settings,
     clock: Callable[[], int] = now_ms,
     http: httpx.Client | None = None,
+    warm: bool = False,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
@@ -36,6 +49,9 @@ def create_app(
     app.state.readers = ThreadLocalConnections(settings.db_path)
     app.add_middleware(FunnelGuardMiddleware)
     app.state.trip_cache = TripCache()
+    app.state.alerts_memo = None
+    if warm:
+        threading.Thread(target=_warm, args=(app,), daemon=True, name="warm-cache").start()
     app.include_router(router)
     app.include_router(panel_router)
     tile_dir = Path(os.environ.get("CAR_TRACE_TILE_DIR")

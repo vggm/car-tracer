@@ -11,7 +11,7 @@ def main() -> int:
     if not settings.ingest_token:
         print("error: CAR_TRACE_INGEST_TOKEN is empty; refusing to start", file=sys.stderr)
         return 1
-    uvicorn.run(create_app(settings), host="0.0.0.0", port=8000)
+    uvicorn.run(create_app(settings, warm=True), host="0.0.0.0", port=8000)
     return 0
 
 
