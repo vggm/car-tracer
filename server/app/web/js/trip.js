@@ -145,7 +145,7 @@ export async function render(main, params, query) {
     };
     // Repinta la tarjeta de cifras. stats: model.top, un tramo o las cifras de un rango;
     // opts.journey: true cuando son las del viaje entero (muestra «Al volante» y «Duración total»).
-    // Tarea 7 la llamará con las cifras de un rango.
+    // opts.range: cifras de un intervalo seleccionado en la gráfica (km aproximados).
     const statsHost = el("div", { class: "stats trip-stats" });
     // Selección de un intervalo en la gráfica: título y enlace para quitarla.
     let ranged = false;
@@ -156,7 +156,8 @@ export async function render(main, params, query) {
       if (opts.range) {
         statsHost.replaceChildren(
           stat("Distancia", `≈ ${n1(o.km)}`, "km"),
-          stat("Duración", dur(o.duration_ms)),
+          stat("Al volante", dur(o.drive_ms)),
+          ...(Math.abs(o.duration_ms - o.drive_ms) > 60000 ? [stat("Duración total", dur(o.duration_ms))] : []),
           stat("Media", n0(o.avg_kmh), "km/h"),
           stat("Máxima", nil(o.max_kmh) ? "—" : n0(o.max_kmh), nil(o.max_kmh) ? "" : "km/h"));
         return;

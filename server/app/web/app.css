@@ -641,7 +641,7 @@ a.mp-btn:hover { background: var(--surface-2); }
   cursor: pointer;
 }
 .sel-mode[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-@media (pointer: coarse) { .sel-mode { display: inline-block; } }
+@media (any-pointer: coarse) { .sel-mode { display: inline-block; } }
 .charts.selecting .u-over { touch-action: none; }
 .charts .u-select { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .sel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.533rem; margin: 0 0 0.667rem; }
