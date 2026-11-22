@@ -24,6 +24,7 @@
   --text: #e8e6e3;
   --muted: #9aa0a6;
   --accent: #5cb8ff;
+  --accent-2: #2f7fd0;
   --ok: #3fb950;
   --bad: #f85149;
   --warn: #d29922;
@@ -53,6 +54,7 @@
     --text: #1c1d1f;
     --muted: #6b6f76;
     --accent: #1a6fb5;
+    --accent-2: #5aa6e0;
     --ok: #1e7e3e;
     --bad: #c62828;
     --warn: #9a6700;
@@ -68,6 +70,7 @@
   --text: #1c1d1f;
   --muted: #6b6f76;
   --accent: #1a6fb5;
+  --accent-2: #5aa6e0;
   --ok: #1e7e3e;
   --bad: #c62828;
   --warn: #9a6700;
@@ -594,3 +597,25 @@ a.mp-btn:hover { background: var(--surface-2); }
 .ct-row { display: flex; align-items: center; gap: .35rem; }
 .ct-dot { width: .45rem; height: .45rem; border-radius: 50%; flex: none; }
 /* === /Polish B === */
+
+/* trip detail: journeys, segments, stops */
+.journey-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.667rem; margin: 0.533rem 0 0; }
+.journey-actions:empty { display: none; }
+.journey-actions .btn { cursor: pointer; font: inherit; font-size: 0.933rem; }
+.journey-link { color: var(--accent); font-size: 0.933rem; text-decoration: none; }
+.journey-link:hover { text-decoration: underline; }
+.seg-chips { display: flex; gap: 0.533rem; margin: 0 0 0.933rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 0.2rem; }
+.chip {
+  flex: 0 0 auto;
+  padding: 0.467rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.867rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chip:hover { color: var(--text); border-color: var(--muted); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

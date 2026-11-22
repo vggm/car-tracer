@@ -21,6 +21,16 @@ export async function getJSON(path) {
   }
 }
 
+export async function deleteJSON(path) {
+  let res;
+  try {
+    res = await fetch(path, { method: "DELETE", headers: { Accept: "application/json" } });
+  } catch (e) {
+    throw new ApiError("network", 0);
+  }
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status);
+}
+
 // Una sola petición de avisos en vuelo a la vez (insignia y pantalla Avisos la comparten).
 let pendingAlerts = null;
 export function getAlerts() {

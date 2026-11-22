@@ -13,13 +13,14 @@ const routes = [
   { re: /^\/resumen(?:\/(\d{4}-\d{2}))?$/, view: overview },
   { re: /^\/trayectos(?:\/(\d{4}-\d{2}))?$/, view: trips },
   { re: /^\/trayecto\/([^/]+)$/, view: trip },
+  { re: /^\/viaje\/(v\d+)$/, view: trip },
   { re: /^\/averias$/, view: dtc },
   { re: /^\/avisos$/, view: alerts },
 ];
 
 function markActive(path) {
   const key = path.split("/")[1];
-  const section = key === "trayecto" ? "trayectos" : key;
+  const section = key === "trayecto" || key === "viaje" ? "trayectos" : key;
   document.querySelectorAll("[data-nav]").forEach((a) => {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
