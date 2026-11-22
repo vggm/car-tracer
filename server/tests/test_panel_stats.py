@@ -19,7 +19,7 @@ def utc(y, m, d, hh=12, mm=0):
 
 def make_trip(start_ts, km=1.0, max_kmh=None, drive_ms=600_000):
     return Trip(
-        id=f"s:{start_ts}", session_id="s", start_ts=start_ts, end_ts=start_ts + drive_ms,
+        id=str(start_ts), start_ts=start_ts, end_ts=start_ts + drive_ms,
         distance_m=km * 1000, max_kmh=max_kmh, has_obd=False, idle_ms=0,
         coolant_start=None, coolant_max=None, rpm_avg=None, rpm_max=None,
         new_dtcs=None, points=[],
@@ -132,7 +132,7 @@ def test_totals_and_rounding():
 def test_trip_summary():
     t = make_trip(1000, km=3.0, max_kmh=60.4)
     s = stats.trip_summary(t)
-    assert s["id"] == "s:1000" and s["km"] == 3.0 and s["max_kmh"] == 60
+    assert s["id"] == "1000" and s["km"] == 3.0 and s["max_kmh"] == 60
     assert s["duration_ms"] == 600_000 and s["avg_kmh"] == 18
     assert s["has_obd"] is False and s["new_dtcs"] is None
 
@@ -187,3 +187,14 @@ def test_dtc_state_none_and_described(tmp_path):
         "active": [{"code": "P0401", "desc": describe("P0401")}],
         "pending": [{"code": "P0409", "desc": describe("P0409")}],
     }
+
+
+def test_with_gaps_same_day_and_midnight():
+    a = make_trip(utc(2026, 11, 10, 10), drive_ms=600_000)
+    b = make_trip(utc(2026, 11, 10, 11), drive_ms=600_000)
+    c = make_trip(utc(2026, 11, 10, 23, 30), drive_ms=600_000)
+    out = stats.with_gaps([c, b, a], TZ)
+    assert [o["kind"] for o in out] == ["trip"] * 3
+    assert out[0]["gap_before_ms"] is None  # b ends 12:10 UTC, c starts 00:30 Madrid next day
+    assert out[1]["gap_before_ms"] == 3_000_000
+    assert out[2]["gap_before_ms"] is None

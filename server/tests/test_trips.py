@@ -3,7 +3,7 @@ import uuid
 
 from app import db
 from app.location import GpsPoint
-from app.trips import get_trip, list_trips, valid_points
+from app.trips import get_trip, group_spans, list_trips, parse_trip_ts, session_spans, valid_points
 
 M_PER_DEG = 111_195.0  # metres per degree of latitude
 _n = [0]
@@ -192,7 +192,8 @@ def test_get_trip_unknown_and_malformed(tmp_path):
     drive(conn, 0, 100)
     assert get_trip(conn, "nope") is None
     assert get_trip(conn, "s1:abc") is None
-    assert get_trip(conn, "s1:5") is None
+    assert get_trip(conn, "s1:999999999") is None
+    assert get_trip(conn, "999999999") is None
 
 
 def test_trip_id_fits_callback_data(tmp_path):
@@ -263,3 +264,81 @@ def test_pagination_boundary_inside_session(tmp_path):
     assert [t.start_ts for t in page2] == [2_000_000, 1_000_000] and more2
     page3, more3 = list_trips(conn, before_ts=page2[-1].start_ts, limit=2)
     assert [t.start_ts for t in page3] == [0] and not more3
+
+
+def test_relaunch_joins_sessions(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    drive(conn, 637_000, 600, session="b", north0=6000)
+    trips, _ = list_trips(conn)
+    assert len(trips) == 1
+    assert trips[0].id == "0"
+    assert trips[0].end_ts == 1_237_000
+    assert trips[0].distance_m > 11_000
+
+
+def test_stop_over_gap_keeps_two_trips(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    drive(conn, 600_000 + 230_000, 600, session="b", north0=6000)
+    trips, _ = list_trips(conn)
+    assert len(trips) == 2
+
+
+def test_overlapping_sessions_one_group(tmp_path):
+    conn = _conn(tmp_path)
+    for i in range(0, 300, 20):
+        gps(conn, i * 1000, north_m=i * 10, speed=10.0, session="a")
+        gps(conn, (i + 10) * 1000, north_m=(i + 10) * 10, speed=10.0, session="b")
+    groups = group_spans(session_spans(conn))
+    assert len(groups) == 1 and len(groups[0]) == 2
+
+
+def test_get_trip_new_and_legacy_id(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    drive(conn, 637_000, 600, session="b", north0=6000)
+    base = get_trip(conn, "0")
+    assert base is not None and base.id == "0"
+    for tid in ("b:637000", "a:0"):
+        t = get_trip(conn, tid)
+        assert t is not None and t.id == "0" and t.end_ts == base.end_ts
+    assert get_trip(conn, "nope") is None
+    assert get_trip(conn, "999999999") is None
+
+
+def test_parse_trip_ts():
+    assert parse_trip_ts("123") == 123
+    assert parse_trip_ts("s:123") == 123
+    assert parse_trip_ts("v12") is None
+    assert parse_trip_ts("") is None
+    assert parse_trip_ts("s:") is None
+    assert parse_trip_ts("9" * 18) == int("9" * 18)
+    assert parse_trip_ts("9" * 19) is None
+    assert parse_trip_ts("1" * 5000) is None
+
+
+def test_before_ts_inside_merged_group(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 300, session="old")
+    drive(conn, 1_000_000, 600, session="a")
+    drive(conn, 1_637_000, 600, session="b", north0=6000)
+    inside = 1_700_000
+    trips, more = list_trips(conn, before_ts=inside, limit=1)
+    assert [t.start_ts for t in trips] == [1_000_000] and more is True
+    older, more = list_trips(conn, before_ts=1_000_000, limit=1)
+    assert [t.start_ts for t in older] == [0] and more is False
+    only, more = list_trips(conn, before_ts=inside, limit=5)
+    assert [t.start_ts for t in only] == [1_000_000, 0] and more is False
+
+
+def test_health_heartbeats_do_not_bridge_trips(tmp_path):
+    """App bookkeeping (health, obd_trace/diag events) must not join trips across a real stop."""
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    for ts in range(600_000, 830_001, 30_000):
+        add(conn, ts, "health", {"battery": 80}, session="hb")
+        add(conn, ts + 1, "event", {"event": "diag", "detail": None}, session="hb")
+    drive(conn, 830_000, 600, session="b", north0=6000)
+    trips, _ = list_trips(conn)
+    assert len(trips) == 2

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS records (
 );
 CREATE INDEX IF NOT EXISTS records_type_ts ON records(type, ts);
 CREATE INDEX IF NOT EXISTS records_session ON records(session_id, seq);
+CREATE INDEX IF NOT EXISTS records_ts ON records(ts, seq);
 CREATE INDEX IF NOT EXISTS records_session_ts ON records(session_id, ts);
 CREATE TABLE IF NOT EXISTS scan_requests (
   id           TEXT PRIMARY KEY,
@@ -29,11 +30,17 @@ CREATE TABLE IF NOT EXISTS clear_confirmations (
   created_at INTEGER NOT NULL,
   used_at    INTEGER
 );
+CREATE TABLE IF NOT EXISTS journeys (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  start_ts   INTEGER NOT NULL,
+  end_ts     INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -60,6 +67,14 @@ def connect(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     _migrate(conn)
+    return conn
+
+
+def connect_writer(path: str) -> sqlite3.Connection:
+    """Writer opener for hot paths: no schema/migration (the server already ran connect())."""
+    conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 

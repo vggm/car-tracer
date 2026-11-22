@@ -22,7 +22,6 @@ PAGE_SIZE = 5
 @dataclass(frozen=True)
 class Trip:
     id: str
-    session_id: str
     start_ts: int
     end_ts: int
     distance_m: float
@@ -35,10 +34,15 @@ class Trip:
     rpm_max: float | None
     new_dtcs: list[str] | None
     points: list[GpsPoint]
+    rpm_n: int = 0  # samples with rpm > 0
 
     @property
     def duration_ms(self) -> int:
         return self.end_ts - self.start_ts
+
+    @property
+    def drive_ms(self) -> int:
+        return self.duration_ms
 
     @property
     def avg_kmh(self) -> float:
@@ -76,7 +80,7 @@ def _codes(data: dict) -> list[str]:
     return list(dict.fromkeys([*(data.get("active") or []), *(data.get("pending") or [])]))
 
 
-def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str, dict]]) -> Trip | None:
+def _build(conn: sqlite3.Connection, rows: list[tuple[int, str, dict]]) -> Trip | None:
     """rows: one segment of (ts, type, data), ordered by ts."""
     start_ts, end_ts = rows[0][0], rows[-1][0]
     gps_pts = [
@@ -123,8 +127,7 @@ def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str,
             new_dtcs = [c for c in _codes(dtc_rows[-1]) if c not in known]
 
     return Trip(
-        id=f"{session_id}:{start_ts}",
-        session_id=session_id,
+        id=str(start_ts),
         start_ts=start_ts,
         end_ts=end_ts,
         distance_m=distance,
@@ -137,48 +140,87 @@ def _build(conn: sqlite3.Connection, session_id: str, rows: list[tuple[int, str,
         rpm_max=max(running) if running else None,
         new_dtcs=new_dtcs,
         points=points,
+        rpm_n=len(running),
     )
 
 
-def _session_segments(
-    conn: sqlite3.Connection, session_id: str
-) -> list[list[tuple[int, str, dict]]]:
-    """Records of a session split at gaps, oldest first."""
-    rows = [
-        (ts, t, json.loads(d))
-        for ts, t, d in conn.execute(
-            f"SELECT ts, type, data FROM records WHERE session_id=? AND {DRIVING_SQL} ORDER BY ts, seq",
-            (session_id,),
+@dataclass(frozen=True)
+class SessionSpan:
+    session_id: str
+    min_ts: int
+    max_ts: int
+    count: int
+
+
+def session_spans(conn: sqlite3.Connection) -> list[SessionSpan]:
+    """Time span of every session, ordered by first record."""
+    return [
+        SessionSpan(sid, min_ts, max_ts, count)
+        for sid, min_ts, max_ts, count in conn.execute(
+            "SELECT session_id, MIN(ts), MAX(ts), COUNT(*) FROM records"
+            f" WHERE {DRIVING_SQL} GROUP BY session_id ORDER BY 2, 1"
         )
     ]
+
+
+def group_spans(spans: list[SessionSpan]) -> list[list[SessionSpan]]:
+    """Chain sessions whose gap to the group so far is within TRIP_GAP_MS (overlaps included)."""
+    groups: list[list[SessionSpan]] = []
+    group_max = 0
+    for span in sorted(spans, key=lambda s: s.min_ts):
+        if groups and span.min_ts - group_max <= TRIP_GAP_MS:
+            groups[-1].append(span)
+            group_max = max(group_max, span.max_ts)
+        else:
+            groups.append([span])
+            group_max = span.max_ts
+    return groups
+
+
+def range_trips(conn: sqlite3.Connection, min_ts: int, max_ts: int) -> list[Trip]:
+    """Trips of all records with ts in [min_ts, max_ts], regardless of session, oldest first."""
     segments: list[list[tuple[int, str, dict]]] = []
-    for row in rows:
-        if segments and row[0] - segments[-1][-1][0] <= TRIP_GAP_MS:
+    for ts, t, d in conn.execute(
+        f"SELECT ts, type, data FROM records WHERE ts BETWEEN ? AND ? AND {DRIVING_SQL}"
+        " ORDER BY ts, seq",
+        (min_ts, max_ts),
+    ):
+        row = (ts, t, json.loads(d))
+        if segments and ts - segments[-1][-1][0] <= TRIP_GAP_MS:
             segments[-1].append(row)
         else:
             segments.append([row])
-    return segments
-
-
-def session_trips(conn: sqlite3.Connection, session_id: str) -> list[Trip]:
-    """All trips of a session, oldest first."""
-    trips = (_build(conn, session_id, seg) for seg in _session_segments(conn, session_id))
+    trips = (_build(conn, seg) for seg in segments)
     return [t for t in trips if t is not None]
+
+
+def trips_overlapping(conn: sqlite3.Connection, lo: int, hi: int) -> list[Trip]:
+    """Whole trips of every session group intersecting [lo, hi] (late records included)."""
+    for group in group_spans(session_spans(conn)):
+        g_lo, g_hi = min(s.min_ts for s in group), max(s.max_ts for s in group)
+        if g_lo <= hi and g_hi >= lo:
+            lo, hi = min(lo, g_lo), max(hi, g_hi)
+    return range_trips(conn, lo, hi)
+
+
+def parse_trip_ts(trip_id: str) -> int | None:
+    """New ids are str(start_ts); legacy ones are '<session>:<ts>'."""
+    ts = trip_id.rpartition(":")[2]
+    return int(ts) if ts.isascii() and ts.isdigit() and len(ts) <= 18 else None
 
 
 def list_trips(
     conn: sqlite3.Connection, before_ts: int | None = None, limit: int = PAGE_SIZE
 ) -> tuple[list[Trip], bool]:
     """Newest trips first with start_ts < before_ts; flag = older trips exist."""
-    having, params = ("HAVING MIN(ts) < ?", (before_ts,)) if before_ts is not None else ("", ())
-    sessions = conn.execute(
-        f"SELECT session_id, MIN(ts) FROM records WHERE {DRIVING_SQL}"
-        f" GROUP BY session_id {having} ORDER BY 2 DESC",
-        params,
-    ).fetchall()
+    groups = group_spans(session_spans(conn))
     found: list[Trip] = []
-    for session_id, _ in sessions:
-        for trip in reversed(session_trips(conn, session_id)):
+    for group in reversed(groups):
+        lo = min(s.min_ts for s in group)
+        if before_ts is not None and lo >= before_ts:
+            continue
+        hi = max(s.max_ts for s in group)
+        for trip in reversed(range_trips(conn, lo, hi)):
             if before_ts is None or trip.start_ts < before_ts:
                 found.append(trip)
         if len(found) > limit:
@@ -187,10 +229,11 @@ def list_trips(
 
 
 def get_trip(conn: sqlite3.Connection, trip_id: str) -> Trip | None:
-    session_id, sep, start = trip_id.rpartition(":")
-    if not sep or not start.isdigit():
+    ts = parse_trip_ts(trip_id)
+    if ts is None:
         return None
-    for seg in _session_segments(conn, session_id):
-        if seg[0][0] == int(start):
-            return _build(conn, session_id, seg)
+    for group in group_spans(session_spans(conn)):
+        lo, hi = min(s.min_ts for s in group), max(s.max_ts for s in group)
+        if lo <= ts <= hi:
+            return next((t for t in range_trips(conn, lo, hi) if t.start_ts <= ts <= t.end_ts), None)
     return None

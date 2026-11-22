@@ -58,3 +58,9 @@ def test_forwarded_panel_routes_are_404(client):
     for path in ["/", "/static/index.html", "/api/panel/overview", "/tiles/1/0/0.png",
                  "/maps/spain.pmtiles"]:
         assert client.get(path, headers=FWD).status_code == 404, path
+
+
+def test_forwarded_journey_writes_are_404(client):
+    assert client.post("/api/panel/journeys", headers=FWD,
+                       json={"trip_ids": ["1", "2"]}).status_code == 404
+    assert client.delete("/api/panel/journeys/v1", headers=FWD).status_code == 404

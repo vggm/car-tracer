@@ -7,7 +7,8 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app import dtc as dtc_mod
-from app.trips import Trip
+from app.journeys import Item, JourneyView
+from app.trips import Trip, get_trip, range_trips
 
 _MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
 
@@ -50,23 +51,26 @@ def _round1(x: float | None) -> float | None:
     return None if x is None else round(x, 1)
 
 
-def trips_in_month(trips: list[Trip], year: int, month: int, tz: str) -> list[Trip]:
+def items_in_month(items: list[Item], year: int, month: int, tz: str) -> list[Item]:
     key = f"{year:04d}-{month:02d}"
-    return [t for t in trips if month_key(t.start_ts, tz) == key]
+    return [t for t in items if month_key(t.start_ts, tz) == key]
 
 
-def totals(trips: list[Trip]) -> dict:
+trips_in_month = items_in_month
+
+
+def totals(trips: list[Item]) -> dict:
     speeds = [t.max_kmh for t in trips if t.max_kmh is not None]
     return {
         "km": _km(sum(t.distance_m for t in trips)),
         "trips": len(trips),
-        "drive_ms": sum(t.duration_ms for t in trips),
+        "drive_ms": sum(t.drive_ms for t in trips),
         "max_kmh": _round(max(speeds)) if speeds else None,
     }
 
 
 def months_series(
-    trips: list[Trip], year: int, month: int, tz: str, count: int = 12
+    trips: list[Item], year: int, month: int, tz: str, count: int = 12
 ) -> list[dict]:
     keys = []
     idx = year * 12 + (month - 1)
@@ -78,7 +82,7 @@ def months_series(
         if a is not None:
             a["dist"] += t.distance_m
             a["trips"] += 1
-            a["drive_ms"] += t.duration_ms
+            a["drive_ms"] += t.drive_ms
     return [
         {"month": k, "km": _km(a["dist"]), "trips": a["trips"], "drive_ms": a["drive_ms"]}
         for k, a in acc.items()
@@ -86,7 +90,7 @@ def months_series(
 
 
 def days_series(
-    trips: list[Trip], year: int, month: int, tz: str, days: int = 365
+    trips: list[Item], year: int, month: int, tz: str, days: int = 365
 ) -> list[dict]:
     end = date(year, month, calendar.monthrange(year, month)[1])
     start = end - timedelta(days=days - 1)
@@ -110,6 +114,7 @@ def trip_summary(trip: Trip) -> dict:
         "end_ts": trip.end_ts,
         "km": _km(trip.distance_m),
         "duration_ms": trip.duration_ms,
+        "drive_ms": trip.drive_ms,
         "avg_kmh": round(trip.avg_kmh),
         "max_kmh": _round(trip.max_kmh),
         "has_obd": trip.has_obd,
@@ -117,13 +122,56 @@ def trip_summary(trip: Trip) -> dict:
     }
 
 
+def _stop_dicts(view: JourneyView) -> list[dict]:
+    return [
+        {"start_ts": st.start_ts, "end_ts": st.end_ts, "duration_ms": st.duration_ms}
+        for st in view.stops
+    ]
+
+
+def item_summary(item: Item) -> dict:
+    if isinstance(item, JourneyView):
+        return {
+            "kind": "journey",
+            "id": item.id,
+            "start_ts": item.start_ts,
+            "end_ts": item.end_ts,
+            "km": _km(item.distance_m),
+            "duration_ms": item.duration_ms,
+            "drive_ms": item.drive_ms,
+            "avg_kmh": round(item.avg_kmh),
+            "max_kmh": _round(item.max_kmh),
+            "has_obd": item.has_obd,
+            "new_dtcs": item.new_dtcs,
+            "segments": [trip_summary(s) for s in item.segments],
+            "stops": _stop_dicts(item),
+        }
+    return {"kind": "trip", **trip_summary(item)}
+
+
+def with_gaps(items_newest_first: list[Item], tz: str, keep=None) -> list[dict]:
+    """Summaries with gap_before_ms; gaps use the whole list, `keep(item)` limits what is summarised."""
+    out = []
+    items = items_newest_first
+    for i, item in enumerate(items):
+        if keep is not None and not keep(item):
+            continue
+        gap = None
+        if i + 1 < len(items):
+            prev = items[i + 1]
+            if date_key(item.start_ts, tz) == date_key(prev.end_ts, tz):
+                gap = item.start_ts - prev.end_ts
+        out.append({**item_summary(item), "gap_before_ms": gap})
+    return out
+
+
 def _series(conn: sqlite3.Connection, trip: Trip) -> dict:
     rows = [
         (ts, (json.loads(d).get("values") or {}))
         for ts, d in conn.execute(
-            "SELECT ts, data FROM records WHERE type='obd' AND session_id=?"
+            "SELECT ts, data FROM records WHERE type='obd'"
             " AND ts BETWEEN ? AND ? ORDER BY ts, seq",
-            (trip.session_id, trip.start_ts, trip.end_ts),
+            (trip.start_ts, trip.end_ts),
         )
     ]
     if any(v.get("speed_kmh") is not None for _, v in rows):
@@ -154,6 +202,52 @@ def trip_detail(conn: sqlite3.Connection, trip: Trip) -> dict:
         "rpm_max": _round(trip.rpm_max),
         "points": [[round(p.lat, 6), round(p.lon, 6), p.ts] for p in trip.points],
         "series": _series(conn, trip),
+    }
+
+
+def journey_detail(conn: sqlite3.Connection, view: JourneyView) -> dict | None:
+    """Detail of a journey; None if a segment can no longer be loaded."""
+    segs = []
+    for seg in view.segments:
+        full = next((t for t in range_trips(conn, seg.start_ts, seg.end_ts) if t.id == seg.id), None)
+        if full is None:
+            full = get_trip(conn, seg.id)
+        if full is None:
+            return None
+        segs.append(full)
+    series: dict[str, list] = {"ts": [], "speed_kmh": [], "rpm": [], "coolant_c": []}
+    stops = []
+    for i, full in enumerate(segs):
+        if i > 0:
+            st = view.stops[i - 1]
+            last = segs[i - 1].points[-1] if segs[i - 1].points else None
+            stops.append({
+                "start_ts": st.start_ts, "end_ts": st.end_ts, "duration_ms": st.duration_ms,
+                "lat": None if last is None else round(last.lat, 6),
+                "lon": None if last is None else round(last.lon, 6),
+            })
+            series["ts"].append(st.start_ts + 1)
+            for k in ("speed_kmh", "rpm", "coolant_c"):
+                series[k].append(None)
+        part = _series(conn, full)
+        for k in series:
+            series[k].extend(part[k])
+    seg_details = []
+    for full in segs:
+        d = trip_detail(conn, full)
+        del d["series"]
+        seg_details.append(d)
+    return {
+        **item_summary(view),
+        "new_dtcs_desc": _described(view.new_dtcs or []),
+        "idle_ms": view.idle_ms,
+        "coolant_start": _round(view.coolant_start),
+        "coolant_max": _round(view.coolant_max),
+        "rpm_avg": _round(view.rpm_avg),
+        "rpm_max": _round(view.rpm_max),
+        "segments": seg_details,
+        "stops": stops,
+        "series": series,
     }
 
 
