@@ -1,6 +1,6 @@
 import { el, card, stat, monthPicker, emptyState, load } from "./ui.js";
 import { getJSON } from "./api.js";
-import { km, kmh, dur, monthName, thisMonth, today } from "./fmt.js";
+import { km, dur, monthName, thisMonth, today } from "./fmt.js";
 import { heatmap, monthBars } from "./charts.js";
 
 function legend() {
@@ -32,11 +32,10 @@ export async function render(main, params) {
       el("h1", { class: "page-title" }, "Resumen"),
       monthPicker(month, (x) => `#/resumen/${x}`),
       card(null,
-        el("div", { class: "stats" },
+        el("div", { class: "stats overview-stats" },
           stat("Kilómetros", km(t.km).replace(" km", ""), "km"),
           stat("Trayectos", String(t.trips)),
-          stat("Al volante", dur(t.drive_ms ?? 0)),
-          stat("Velocidad máx.", kmh(t.max_kmh ?? 0).replace(" km/h", ""), "km/h")),
+          stat("Al volante", dur(t.drive_ms ?? 0))),
         t.trips ? null : emptyState(`Sin trayectos en ${monthName(month)}`)),
       hmCard,
       card("Kilómetros por mes", bars));

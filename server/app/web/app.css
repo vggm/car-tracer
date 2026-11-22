@@ -486,3 +486,10 @@ a.mp-btn:hover { background: var(--surface-2); }
 .hm-pop a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .hm-pop a:hover { text-decoration: underline; }
 /* === /Task 8 === */
+
+/* Resumen: three figures — on mobile the third spans the row, from 900 px all three in line */
+.overview-stats > .stat:nth-child(3) { grid-column: 1 / -1; }
+@media (min-width: 900px) {
+  .overview-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .overview-stats > .stat:nth-child(3) { grid-column: auto; }
+}
