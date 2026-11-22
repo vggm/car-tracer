@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".CarTraceApp"
         android:allowBackup="false"
         android:label="car-trace"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

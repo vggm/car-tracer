@@ -13,6 +13,13 @@ import dev.lnk.cartrace.contract.EventRecord
 import dev.lnk.cartrace.contract.Command
 import dev.lnk.cartrace.contract.Events
 import dev.lnk.cartrace.contract.GpsRecord
+import dev.lnk.cartrace.contract.HealthRecord
+import dev.lnk.cartrace.diag.Diagnostics
+import dev.lnk.cartrace.diag.HealthProbe
+import dev.lnk.cartrace.diag.PrefsPendingDiagStore
+import dev.lnk.cartrace.diag.flushPending
+import dev.lnk.cartrace.diag.healthValues
+import dev.lnk.cartrace.diag.obdStateCode
 import dev.lnk.cartrace.core.OffsetRecorder
 import dev.lnk.cartrace.core.Session
 import dev.lnk.cartrace.core.SleepDetector
@@ -51,6 +58,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class TelemetryService : Service() {
@@ -66,6 +75,17 @@ class TelemetryService : Service() {
     private val gpsLock = Any()
     private val obdMutex = Mutex()
     private var uploadLoop: UploadLoop? = null
+    private lateinit var pendingDiag: PrefsPendingDiagStore
+    private lateinit var diag: Diagnostics
+    private lateinit var noFix: GpsNoFixWatcher
+    private val healthProbe by lazy { HealthProbe(this) }
+    /** One adapter probe of ATPPS per service start, shared by every ObdSource we build. */
+    private val atppsProbed = AtomicBoolean(false)
+    private var serviceStartMs = 0L
+    @Volatile private var lastUploadOkMs: Long? = null
+    @Volatile private var lastAccM: Double? = null
+    private val failuresSinceBeat = AtomicInteger(0)
+    private var failStreak = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,6 +96,11 @@ class TelemetryService : Service() {
         val bootCount = graph.clocks.bootCount()
         Status.setBootCount(bootCount)
         Log.i(TAG, "BOOT_COUNT=$bootCount (must increase between ignition cycles)")
+        pendingDiag = PrefsPendingDiagStore(this)
+        // Monotonic clock: wall time can jump when the tablet resyncs.
+        diag = Diagnostics(nowMs = { graph.clocks.elapsedMs() }, emit = { _, text -> emitDiag(text) })
+        serviceStartMs = graph.clocks.elapsedMs()
+        noFix = GpsNoFixWatcher({ graph.clocks.elapsedMs() })
         createChannel()
         if (!enterForeground()) {
             stopSelf()
@@ -84,17 +109,45 @@ class TelemetryService : Service() {
         val handler = CoroutineExceptionHandler { _, e ->
             Log.e(TAG, "uncaught exception in service scope", e)
             Status.addError("uncaught: ${e.javaClass.simpleName}: ${e.message ?: ""}".trim())
+            reportAsync("service.uncaught", "${e.javaClass.simpleName}: ${e.message ?: ""}".trim())
         }
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
         scope = s
-        supervisor = Supervisor(s)
+        supervisor = Supervisor(s, onCrash = { name, e ->
+            diag.report("service.child_crash", "$name: ${e.javaClass.simpleName}: ${e.message ?: ""}".trim())
+        })
         started = true
         Status.setServiceRunning(true)
 
         s.launch {
             // session_start goes in before any source can take a seq number
             safely("session_start") { emitEvent(session.get(), Events.SESSION_START, null) }
+            safely("flush pending diag") { diag.flushPending(pendingDiag) }
             startChildren()
+        }
+    }
+
+    /** Emits a diag event; never throws into callers (failures are logged and the diag dropped). */
+    private suspend fun emitDiag(text: String) {
+        try {
+            emitEvent(session.get(), Events.DIAG, text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "diag emit failed, dropped", e)
+        }
+    }
+
+    private fun reportAsync(code: String, text: String) {
+        val s = scope ?: return
+        s.launch {
+            try {
+                diag.report(code, text)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "diag report failed", e)
+            }
         }
     }
 
@@ -121,6 +174,25 @@ class TelemetryService : Service() {
                 if (sleepDetector.tick()) onResumed()
             }
         }
+        supervisor.launch("health") {
+            while (true) {
+                safely("health") { emitHealth() }
+                delay(HEALTH_EVERY_MS)
+            }
+        }
+        supervisor.launch("gps-watch") {
+            while (true) {
+                delay(GPS_WATCH_TICK_MS)
+                if (noFix.tick()) diag.report("gps.no_fix", "no GPS fix for more than 120 s")
+            }
+        }
+        supervisor.launch("dropped-watch") {
+            var last = graph.queue.droppedCount.value
+            graph.queue.droppedCount.collect { now ->
+                if (now > last) diag.report("queue.dropped", "dropped ${now - last} records")
+                last = now
+            }
+        }
         supervisor.launch("status") {
             while (true) {
                 Status.setQueueSize(graph.queue.size())
@@ -143,7 +215,9 @@ class TelemetryService : Service() {
                 return true
             } catch (e: Exception) {
                 Log.e(TAG, "startForeground failed (types=$types)", e)
-                Status.addError("startForeground: ${e.javaClass.simpleName}: ${e.message ?: ""}".trim())
+                val msg = "startForeground: ${e.javaClass.simpleName}: ${e.message ?: ""}".trim()
+                Status.addError(msg)
+                pendingDiag.add("service.foreground_failed", msg)
             }
         }
         // Last resort, so the system does not kill us for not calling startForeground.
@@ -185,7 +259,52 @@ class TelemetryService : Service() {
             onOutcome = { o: UploadOutcome ->
                 Status.recordUpload(System.currentTimeMillis(), o)
                 if (o is UploadOutcome.Unauthorized) Log.w(TAG, "upload rejected: 401")
+                onUploadOutcome(o)
             },
+        )
+    }
+
+    private fun onUploadOutcome(o: UploadOutcome) {
+        when (o) {
+            is UploadOutcome.Sent -> {
+                if (failStreak > 0) reportAsync("upload.failing", "recuperado tras $failStreak fallos")
+                failStreak = 0
+                lastUploadOkMs = graph.clocks.elapsedMs()
+            }
+            is UploadOutcome.Retry -> {
+                failuresSinceBeat.incrementAndGet()
+                if (++failStreak == 1) reportAsync("upload.failing", o.reason)
+            }
+            UploadOutcome.Unauthorized -> {
+                failuresSinceBeat.incrementAndGet()
+                failStreak++
+                reportAsync("upload.unauthorized", "server answered 401")
+            }
+            UploadOutcome.TooLarge -> {
+                failuresSinceBeat.incrementAndGet()
+                failStreak++
+                reportAsync("upload.too_large", "server answered 413")
+            }
+            is UploadOutcome.Discarded, UploadOutcome.Idle -> Unit
+        }
+    }
+
+    private suspend fun emitHealth() {
+        val now = graph.clocks.elapsedMs()
+        val inputs = healthProbe.read().copy(
+            queuePending = try { graph.queue.size().toLong() } catch (e: Exception) { null },
+            queueDroppedTotal = graph.queue.droppedCount.value.toLong(),
+            uploadOkAgeS = lastUploadOkMs?.let { (now - it) / 1000 },
+            uploadFailures = failuresSinceBeat.getAndSet(0).toLong(),
+            gpsFixAgeS = noFix.fixAgeS(),
+            gpsAccM = lastAccM,
+            obdState = if (currentObd == null) 0 else obdStateCode(Status.obd.value),
+            serviceUptimeS = (now - serviceStartMs) / 1000,
+        )
+        val sess = session.get()
+        graph.queue.add(
+            HealthRecord(UUID.randomUUID().toString(), sess.id, sess.nextSeq(), 0, healthValues(inputs)),
+            graph.clocks.stamp(),
         )
     }
 
@@ -224,7 +343,7 @@ class TelemetryService : Service() {
         synchronized(gpsLock) {
             if (!s.isActive) return
             gps?.stop()
-            val source: GpsSource = if (snap.simulated) FakeGpsSource.fromAssets(this, s) else AndroidGpsSource(this)
+            val source: GpsSource = if (snap.simulated) FakeGpsSource.fromAssets(this, s) else AndroidGpsSource(this, ::reportAsync)
             gps = source
             source.start { fix -> s.launch { safely("gps fix") { handleFix(fix) } } }
         }
@@ -259,6 +378,7 @@ class TelemetryService : Service() {
                 adapterAddress = snap.adapterAddress,
                 protocolPreference = snap.obdProtocol,
                 handledScans = handledScans,
+                probeOnce = atppsProbed,
             )
             currentObd = obd
             coroutineScope {
@@ -295,6 +415,8 @@ class TelemetryService : Service() {
         val stamp = graph.clocks.stamp()
         graph.offsetRecorder.onFix(stamp.bootCount, fix.utcMs, stamp.elapsedMs, fix.simulated)
         Status.setLastFix(fix)
+        noFix.onFix()
+        lastAccM = fix.accM.takeIf { it < 9999.0 }
         motion.onFix(fix.speedMps)
         val sess = session.get()
         graph.queue.add(
@@ -348,5 +470,7 @@ class TelemetryService : Service() {
         const val NOTIFICATION_ID = 307
         const val SLEEP_TICK_MS = 5_000L
         const val NOTIFY_EVERY_MS = 10_000L
+        const val HEALTH_EVERY_MS = 300_000L
+        const val GPS_WATCH_TICK_MS = 10_000L
     }
 }

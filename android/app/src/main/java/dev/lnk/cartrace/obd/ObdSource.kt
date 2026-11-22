@@ -329,7 +329,7 @@ class ObdSource(
         if (protocolNumber == "5") {
             runSteps(t, commandsFor(variant))
         } else {
-            t.command("ATZ", LONG_TIMEOUT)
+            resetAdapter(t, "ATZ", LONG_TIMEOUT)
             val setup = mutableListOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP$protocolNumber")
             // Some PSA ECUs send non-standard key bytes on K-line; replies (clones answer "?") are ignored.
             if (protocolNumber in K_LINE) setup += "ATKW0"
@@ -379,6 +379,14 @@ class ObdSource(
         return dpn
     }
 
+    /** A pending bus init (probe 0100) can make the ELM answer a reset with STOPPED and shift replies. */
+    private fun needsResync(raw: String): Boolean =
+        raw.contains("STOPPED", ignoreCase = true) || ElmParser.clean(raw).singleOrNull() == "?"
+
+    private suspend fun resetAdapter(t: ElmTransport, cmd: String, timeoutMs: Long) {
+        if (needsResync(t.command(cmd, timeoutMs))) t.command(cmd, timeoutMs)
+    }
+
     private var supported: Set<String> = emptySet()
 
     private fun noteGlued(raw: String) {
@@ -390,7 +398,9 @@ class ObdSource(
             is Step.Wait -> delayFn(step.ms)
             is Step.Cmd -> {
                 val raw = t.command(step.text, step.timeoutMs)
-                if (step.text == "ATFI") {
+                if (step.text == "ATZ" || step.text == "ATWS") {
+                    if (needsResync(raw)) t.command(step.text, step.timeoutMs)
+                } else if (step.text == "ATFI") {
                     noteGlued(raw)
                     if (ElmParser.isError(raw)) {
                         val unable = ElmParser.isUnableToConnect(raw)

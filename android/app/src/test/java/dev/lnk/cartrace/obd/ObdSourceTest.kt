@@ -43,6 +43,8 @@ private class ScriptedTransport(
     private var timedOut = false
     var closed = false
     var failOn03 = false
+    /** One-shot reply to the next ATZ (e.g. STOPPED after an unfinished bus init). */
+    var atzFirst: String? = null
     var answer03: String? = null
     var answer04: String = "44\r\r>"
     var failOn04 = false
@@ -64,7 +66,7 @@ private class ScriptedTransport(
         timeouts.putIfAbsent(cmd, timeoutMs)
         if (cmd.startsWith("ATSP")) lastSp = cmd
         return when (cmd) {
-            "ATZ" -> "ELM327 v1.5\r\r>"
+            "ATZ" -> atzFirst?.also { atzFirst = null } ?: "ELM327 v1.5\r\r>"
             "ATDPN" -> "$dpn\r\r>"
             "0100" -> if (timeoutOn0100 != null) throw IOException(timeoutOn0100) else if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
             "0120" -> MASK_0120
@@ -116,6 +118,28 @@ class ObdSourceTest {
         )
         assertEquals(ObdState.Connected("A6"), src.state.value)
         assertEquals(listOf(Events.OBD_CONNECTED), events().map { it.event })
+        job.cancel()
+    }
+
+    @Test
+    fun atzStoppedReplyResendsReset() = runTest {
+        val log = mutableListOf<String>()
+        val src = source { ScriptedTransport(log).apply { atzFirst = "STOPPED\r\r>" } }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        val i = log.indexOf("ATZ")
+        assertEquals(listOf("ATZ", "ATZ", "ATE0"), log.subList(i, i + 3))
+        assertEquals(ObdState.Connected("A6"), src.state.value)
+        job.cancel()
+    }
+
+    @Test
+    fun atzQuestionMarkReplyResendsReset() = runTest {
+        val log = mutableListOf<String>()
+        val src = source { ScriptedTransport(log).apply { atzFirst = "?\r\r>" } }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertEquals(2, log.count { it == "ATZ" })
         job.cancel()
     }
 
