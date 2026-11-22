@@ -19,6 +19,7 @@ _KV = re.compile(r"(\w+)=(\S+)")
 _LINE = re.compile(
     r"^\+(\d+)\s+>\s+(.*?)\s+\|\s+(.*?)\s+\|\s+(\d+)(?:\s+\|\s+ERR\s+(.*))?$")
 _DIAG = re.compile(r"^([A-Za-z_]+)\.([A-Za-z_0-9]+)(?:\s+x(\d+))?(?:\s+(.*))?$", re.S)
+_NOTE = re.compile(r"^\+\d+\s+#\s*(.*)$")
 _RESET_CMDS = {"ATZ", "ATWS"}
 
 
@@ -92,17 +93,21 @@ def parse_trace(detail):
     if not m:
         return None
     attrs = dict(_KV.findall(m.group(2)))
-    lines, unparsed = [], 0
+    lines, notes, unparsed = [], [], 0
     for raw in parts[1:]:
         raw = raw.strip()
-        if not raw or raw.startswith("…") or re.match(r"^\+\d+\s+open\b", raw):
+        if not raw or raw.startswith("…"):
+            continue
+        nm = _NOTE.match(raw)
+        if nm:
+            notes.append(nm.group(1))
             continue
         lm = _LINE.match(raw)
         if not lm:
             unparsed += 1
             continue
         lines.append((int(lm.group(1)), lm.group(2), lm.group(3), int(lm.group(4)), lm.group(5)))
-    return {"kind": m.group(1), "attrs": attrs, "lines": lines, "unparsed": unparsed}
+    return {"kind": m.group(1), "attrs": attrs, "lines": lines, "notes": notes, "unparsed": unparsed}
 
 
 def probe_summary(rows):
@@ -120,7 +125,8 @@ def probe_summary(rows):
             stats["lost"] += 1
             continue
         stats["attempts"] += 1
-        if t["attrs"].get("glued") == "1" or "glued=1" in _detail(r).splitlines()[0]:
+        if (t["attrs"].get("glued") == "1"
+                or any("glued=1" in n for n in t["notes"])):
             stats["glued"] += 1
         probe = "sin 0100 previo"
         for _ms, cmd, resp, _dur, _err in t["lines"]:
@@ -128,7 +134,7 @@ def probe_summary(rows):
             if c in _RESET_CMDS:
                 break
             if c == "0100":
-                probe = ("sesion viva (41 00)"
+                probe = ("sesión viva (41 00)"
                          if "4100" in re.sub(r"[\s⏎↵>]", "", resp) else "0100 sin datos")
         res = t["attrs"].get("result", "?")
         table[(probe, res)] = table.get((probe, res), 0) + 1

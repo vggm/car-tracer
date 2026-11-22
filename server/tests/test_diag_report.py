@@ -5,6 +5,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from app.db import SCHEMA
+
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "diag_report.py"
 spec = importlib.util.spec_from_file_location("diag_report", SCRIPT)
 dr = importlib.util.module_from_spec(spec)
@@ -23,7 +25,9 @@ def health(values, ts):
 
 TRACE_OK = (
     "attempt n=1 variant=V3 session_age=12s result=ok\n"
-    "+0 > ATI | ELM327 v1.5⏎⏎> | 30\n"
+    "+0 > open | OK | 5\n"
+    "+12 # glued=1\n"
+    "+20 > ATI | ELM327 v1.5⏎⏎> | 30\n"
     "+40 > 0100 | 41 00 BE 3E B8 13⏎⏎> | 80\n"
     "+130 > ATWS | ELM327 v1.5⏎⏎> | 90\n"
     "+230 > 0100 | 41 00 BE 3E B8 13⏎⏎> | 70"
@@ -70,16 +74,16 @@ def test_diag_summary_groups_and_sums():
 
 def test_probe_cross():
     table, st = dr.probe_summary(seeded_rows())
-    assert table[("sesion viva (41 00)", "ok")] == 1
+    assert dr.parse_trace(TRACE_OK)["unparsed"] == 0
+    assert table[("sesión viva (41 00)", "ok")] == 1
     assert table[("0100 sin datos", "fail")] == 1
-    assert st["glued"] == 1 and st["unparsed"] == 2 and st["attempts"] == 2
+    assert st["glued"] == 2 and st["unparsed"] == 2 and st["attempts"] == 2
 
 
 def test_report_sections_from_db(tmp_path):
     db = tmp_path / "t.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE records (id TEXT PRIMARY KEY, device_id TEXT, session_id TEXT,"
-                 " seq INTEGER, ts INTEGER, type TEXT, data TEXT, received_at INTEGER)")
+    conn.executescript(SCHEMA)
     for i, r in enumerate(seeded_rows()):
         conn.execute("INSERT INTO records VALUES (?,?,?,?,?,?,?,?)",
                      (str(i), "d", "s", i, r["ts"], r["type"], json.dumps(r["data"]), NOW))
