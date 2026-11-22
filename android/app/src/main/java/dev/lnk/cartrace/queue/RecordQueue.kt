@@ -4,6 +4,7 @@ import dev.lnk.cartrace.contract.ContractJson
 import dev.lnk.cartrace.contract.DtcRecord
 import dev.lnk.cartrace.contract.EventRecord
 import dev.lnk.cartrace.contract.GpsRecord
+import dev.lnk.cartrace.contract.HealthRecord
 import dev.lnk.cartrace.contract.ObdRecord
 import dev.lnk.cartrace.contract.Record
 import dev.lnk.cartrace.core.Resolution
@@ -22,6 +23,7 @@ private fun Record.withTs(ts: Long): Record = when (this) {
     is ObdRecord -> copy(ts = ts)
     is DtcRecord -> copy(ts = ts)
     is EventRecord -> copy(ts = ts)
+    is HealthRecord -> copy(ts = ts)
 }
 
 /** Durable FIFO queue of records; timestamps are resolved to UTC when handed out. */
