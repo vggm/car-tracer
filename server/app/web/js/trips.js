@@ -37,8 +37,14 @@ function gapLine(newer, older, refresh) {
       busy = false;
       link.removeAttribute("aria-disabled");
       line.querySelector(".trip-join-err")?.remove();
-      line.append(el("span", { class: "trip-join-err", role: "alert" }, " No se pudo unir"));
-      if (e && e.status === 422) refresh(); // the trip ids changed: the list is stale
+      const err = el("span", { class: "trip-join-err", role: "alert" }, " No se pudo unir");
+      if (e && e.status === 422) {
+        // Los trayectos cambiaron (llegaron datos nuevos): se ofrece recargar en vez de repintar solo, que borraría el aviso.
+        const again = el("a", { href: "#", class: "trip-join" }, "Actualizar");
+        again.addEventListener("click", (ev2) => { ev2.preventDefault(); refresh(); });
+        err.append(" · ", again);
+      }
+      line.append(err);
     }
   });
   return line;
