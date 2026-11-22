@@ -5,6 +5,10 @@ import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 const nil = (x) => x === null || x === undefined;
 const filled = (a) => Array.isArray(a) && a.filter((v) => !nil(v)).length >= 2;
 const SYNC = "trip-cursor";
+const fClock = new Intl.DateTimeFormat("es-ES", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+const fRpm = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0, useGrouping: "always" });
+const rootPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+const H_MAIN = 14.7, H_COOL = 7.3; // rem
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -27,7 +31,7 @@ function notFound() {
 
 export async function render(main, params) {
   const id = params[0];
-  document.title = "Trayecto · car-trace";
+  document.title = "Trayecto · Car Trace";
   let map = null, charts = [], ro = null, recolor = null, rebuild = null;
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   const onTheme = () => { if (recolor) recolor(); if (rebuild) rebuild(); };
@@ -139,34 +143,86 @@ export async function render(main, params) {
       marker.setLatLng([p[0], p[1]]);
       if (!map.hasLayer(marker)) marker.addTo(map);
     };
+    // Tooltip flotante por gráfico: sigue al cursor sincronizado y muestra los valores exactos del índice.
+    const tooltip = (rows) => ({
+      hooks: {
+        init: (u) => {
+          const tip = el("div", { class: "ct-tip", hidden: true });
+          const time = el("div", { class: "ct-time" });
+          tip.append(time);
+          const vals = rows.map((r) => {
+            const v = el("span", { class: "ct-val" });
+            tip.append(el("div", { class: "ct-row" }, el("i", { class: "ct-dot", style: `background:${r.color}` }), v));
+            return v;
+          });
+          u.over.append(tip);
+          // Táctil: arrastrar el dedo mueve el cursor (uPlot solo reacciona al ratón).
+          const touch = (e) => {
+            const t = e.touches[0], r = u.over.getBoundingClientRect();
+            if (!t) return;
+            const left = t.clientX - r.left;
+            u.setCursor({ left, top: t.clientY - r.top });
+            const x = u.posToVal(left, "x");
+            for (const o of charts) if (o !== u) o.setCursor({ left: o.valToPos(x, "x"), top: -10 });
+          };
+          const off = () => { for (const o of charts) o.setCursor({ left: -10, top: -10 }); };
+          u.over.addEventListener("touchstart", touch, { passive: true });
+          u.over.addEventListener("touchmove", touch, { passive: true });
+          u.over.addEventListener("touchend", off);
+          u.over.addEventListener("touchcancel", off);
+          u._tip = { tip, time, vals, rows };
+        },
+        setCursor: (u) => {
+          const { tip, time, vals, rows: rs } = u._tip;
+          const idx = u.cursor.idx, left = u.cursor.left;
+          if (nil(idx) || idx < 0 || nil(left) || left < 0) { tip.hidden = true; return; }
+          time.textContent = fClock.format(s.ts[idx]);
+          rs.forEach((r, i) => {
+            const v = r.data[idx];
+            vals[i].parentNode.hidden = nil(v);
+            vals[i].textContent = nil(v) ? "" : r.fmt(v);
+          });
+          tip.hidden = false;
+          const gap = 12, w = tip.offsetWidth;
+          const x = left + gap + w > u.over.clientWidth ? left - gap - w : left + gap;
+          tip.style.transform = `translateX(${Math.max(0, x)}px)`;
+        },
+      },
+    });
+    const rowsMain = () => [
+      { color: cssVar("--accent"), data: s.speed_kmh, fmt: (v) => `${n0(v)} km/h` },
+      ...(hasRpm ? [{ color: cssVar("--muted"), data: s.rpm, fmt: (v) => `${fRpm.format(v)} rpm` }] : []),
+      ...(hasCool ? [{ color: cssVar("--warn"), data: s.coolant_c, fmt: (v) => `${n0(v)} °C` }] : []),
+    ];
     const width = () => Math.max(220, Math.floor(box.clientWidth - 32));
 
     const build = () => {
       destroyCharts();
       const accent = cssVar("--accent"), muted = cssVar("--muted"), warn = cssVar("--warn"), line = cssVar("--line");
+      const px = rootPx(), fontCss = `${Math.round(px * 0.7)}px system-ui, sans-serif`;
       const axis = (extra) => ({
-        stroke: muted, font: "11px system-ui, sans-serif", size: 52,
+        stroke: muted, font: fontCss, size: Math.round(px * 3.1),
         grid: { stroke: line, width: 1 }, ticks: { show: false }, ...extra,
       });
-      const xAxis = axis({ size: 28, space: 70, grid: { show: false }, values: (u, vals) => vals.map((v) => hhmm(v * 1000)) });
+      const xAxis = axis({ size: Math.round(px * 1.7), space: Math.round(px * 4.2), grid: { show: false }, values: (u, vals) => vals.map((v) => hhmm(v * 1000)) });
       const base = { tzDate, legend: { show: false }, scales: { x: { time: true } }, hooks: { setCursor: [setCursor] } };
 
       const main1 = {
-        ...base, width: width(), height: 220, cursor: cursorSync(),
+        ...base, width: width(), height: Math.round(H_MAIN * px), cursor: cursorSync(), plugins: [tooltip(rowsMain())],
         series: [{}, { label: "km/h", stroke: accent, width: 2, scale: "kmh", spanGaps: false },
           ...(hasRpm ? [{ label: "rpm", stroke: muted, width: 1.5, scale: "rpm", spanGaps: false }] : [])],
         scales: { x: { time: true }, kmh: { range: (u, lo, hi) => [0, Math.max(hi, 10)] }, rpm: { range: (u, lo, hi) => [0, Math.max(hi, 1000)] } },
-        axes: [xAxis, axis({ scale: "kmh", label: "km/h", labelSize: 16, labelFont: "11px system-ui, sans-serif" }),
-          ...(hasRpm ? [axis({ scale: "rpm", side: 1, label: "rpm", labelSize: 16, labelFont: "11px system-ui, sans-serif", grid: { show: false } })] : [])],
+        axes: [xAxis, axis({ scale: "kmh", label: "km/h", labelSize: Math.round(px), labelFont: fontCss }),
+          ...(hasRpm ? [axis({ scale: "rpm", side: 1, label: "rpm", labelSize: Math.round(px), labelFont: fontCss, grid: { show: false } })] : [])],
       };
       const data1 = [xs, s.speed_kmh, ...(hasRpm ? [s.rpm] : [])];
       const u1 = new uPlot(main1, data1, box.querySelector('[data-chart="main"]'));
       charts.push(u1);
       if (coolBox) {
         const u2 = new uPlot({
-          ...base, width: width(), height: 110, cursor: cursorSync(), padding: [null, 68, null, null],
+          ...base, width: width(), height: Math.round(H_COOL * px), cursor: cursorSync(), padding: [null, hasRpm ? Math.round(px * 4.1) : 8, null, null], plugins: [tooltip(rowsMain().slice(-1))],
           series: [{}, { label: "°C", stroke: warn, width: 2, spanGaps: false }],
-          axes: [xAxis, axis({ label: "°C", labelSize: 16, labelFont: "11px system-ui, sans-serif" })],
+          axes: [xAxis, axis({ label: "°C", labelSize: Math.round(px), labelFont: fontCss })],
         }, [xs, s.coolant_c], coolBox);
         charts.push(u2);
       }
@@ -174,8 +230,11 @@ export async function render(main, params) {
 
     build();
     ro = new ResizeObserver(() => {
-      const w = width();
-      for (const u of charts) if (u.width !== w) u.setSize({ width: w, height: u.height });
+      const w = width(), px = rootPx();
+      charts.forEach((u, i) => {
+        const h = Math.round((i === 0 ? H_MAIN : H_COOL) * px);
+        if (u.width !== w || u.height !== h) u.setSize({ width: w, height: h });
+      });
     });
     ro.observe(box);
     rebuild = build;
