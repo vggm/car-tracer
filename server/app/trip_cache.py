@@ -1,4 +1,7 @@
-"""In-memory cache of computed trips, one entry per session."""
+"""In-memory cache of computed trips, one entry per session.
+
+Cached trips carry no GPS points (memory); use trips.get_trip for the full trip."""
+import dataclasses
 import sqlite3
 import threading
 
@@ -25,7 +28,7 @@ class TripCache:
             for sid, key in keys.items():
                 cached = self._sessions.get(sid)
                 if cached is None or cached[0] != key:
-                    self._sessions[sid] = (key, session_trips(conn, sid))
+                    self._sessions[sid] = (key, [dataclasses.replace(t, points=[]) for t in session_trips(conn, sid)])
             trips = [t for _, ts in self._sessions.values() for t in ts]
         trips.sort(key=lambda t: t.start_ts, reverse=True)
         return trips

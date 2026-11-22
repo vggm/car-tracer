@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.alerts import compute_alerts, recent_count
 from app.panel import stats
+from app.trips import get_trip
 
 router = APIRouter(prefix="/api/panel")
 
@@ -57,7 +58,7 @@ def trips(request: Request, month: str | None = None) -> dict:
 def trip(request: Request, trip_id: str) -> dict:
     state = request.app.state
     db = state.readers.get()
-    found = state.trip_cache.get(db, trip_id)
+    found = get_trip(db, trip_id)
     if found is None:
         raise HTTPException(status_code=404, detail="trip not found")
     return stats.trip_detail(db, found)
