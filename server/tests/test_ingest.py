@@ -228,25 +228,45 @@ def test_ingest_accepts_mixed_new_records(client):
     assert stored[0] == "health" and json.loads(stored[1]) == {"values": {"battery_pct": 80}}
 
 
-def test_health_does_not_affect_trips_alerts_panel(client):
+def _noise(conn, kind, ts, session="s1"):
+    from tests.test_trip_cache import add
+    if kind == "health":
+        add(conn, ts, "health", {"values": {"battery_pct": 50}}, session=session)
+    else:
+        add(conn, ts, "event", {"event": kind, "detail": "x"}, session=session)
+
+
+@pytest.mark.parametrize("kind", ["health", "obd_trace", "diag"])
+def test_health_does_not_affect_trips_alerts_panel(client, kind):
     from app.alerts import compute_alerts
     from app.trips import list_trips
-    from tests.conftest import FIXED_NOW
+    from conftest import FIXED_NOW
     from tests.test_panel_api import T1, T2
-    from tests.test_trip_cache import add, drive
+    from tests.test_trip_cache import drive
 
     conn = client.app.state.db
-    drive(conn, T1, 600, session="s1")
+    # s1: two drives with a 200 s gap (> 120 s trip gap, so two trips); s2: one drive
+    drive(conn, T1 + 100_000, 300, session="s1")
+    drive(conn, T1 + 300_000 + 100_000 + 200_000, 300, session="s1")
     drive(conn, T2, 600, session="s2")
 
     def snapshot():
         trips, more = list_trips(conn)
-        alerts = compute_alerts(conn, trips, FIXED_NOW, "Europe/Madrid")
+        # "stale" intentionally counts heartbeats (the app is alive), so skip it here
+        alerts = [a for a in compute_alerts(conn, trips, FIXED_NOW, "Europe/Madrid")
+                  if a.kind != "stale"]
         panel = client.get("/api/panel/overview").json()
-        return repr((trips, more)), repr(alerts), panel
+        trips_json = client.get("/api/panel/trips").json()
+        return (
+            [(t.id, t.start_ts, t.end_ts) for t in trips], more,
+            repr(alerts), panel, trips_json,
+        )
 
     before = snapshot()
-    for i in range(5):
-        add(conn, T1 + i * 60_000, "health", {"values": {"battery_pct": 70 - i}}, session="s1")
-    add(conn, T2 + 5000, "health", {"values": {"battery_pct": 50}}, session="s3")
+    assert len(before[0]) == 3
+    _noise(conn, kind, T1 + 40_000)                 # 60 s before the first GPS point
+    _noise(conn, kind, T1 + 100_000 + 300_000 + 100_000)  # 100 s after the first drive
+    _noise(conn, kind, T1 + 100_000 + 300_000 + 200_000)  # inside the gap between drives
+    _noise(conn, kind, T2 + 600_000 + 100_000, session="s2")  # 100 s after the last point
+    _noise(conn, kind, T1 + 5_000_000, session="s-only")      # noise-only session
     assert snapshot() == before

@@ -70,7 +70,7 @@ class _ValuesRecord(_Base):
     def _keys(cls, v: dict) -> dict:
         for k in v:
             if not _OBD_KEY.match(k):
-                raise ValueError(f"invalid obd key: {k!r}")
+                raise ValueError(f"invalid values key: {k!r}")
         return v
 
 
@@ -92,7 +92,7 @@ class EventRecord(_Base):
     type: Literal["event"]
     event: Literal["session_start", "resumed", "obd_connected", "obd_lost", "obd_error",
                    "dtc_scan", "dtc_scan_failed", "dtc_clear", "dtc_clear_failed", "obd_attempt_failed", "obd_trace", "diag"]
-    detail: str | None = Field(default=None, max_length=4000)
+    detail: str | None = None
 
     @model_validator(mode="after")
     def _detail_limit(self) -> "EventRecord":
