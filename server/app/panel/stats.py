@@ -15,7 +15,10 @@ _MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
 def parse_month(s: str) -> tuple[int, int]:
     if not _MONTH_RE.fullmatch(s):
         raise ValueError(f"invalid month: {s!r}")
-    return int(s[:4]), int(s[5:])
+    year = int(s[:4])
+    if year < 2000:
+        raise ValueError(f"invalid month: {s!r}")
+    return year, int(s[5:])
 
 
 def _local(ts_ms: int, tz: str) -> datetime:
@@ -143,6 +146,7 @@ def _series(conn: sqlite3.Connection, trip: Trip) -> dict:
 def trip_detail(conn: sqlite3.Connection, trip: Trip) -> dict:
     return {
         **trip_summary(trip),
+        "new_dtcs_desc": _described(trip.new_dtcs or []),
         "idle_ms": trip.idle_ms,
         "coolant_start": _round(trip.coolant_start),
         "coolant_max": _round(trip.coolant_max),
