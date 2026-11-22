@@ -11,7 +11,7 @@ from app.alerts import compute_alerts, recent_count
 from app import db as db_mod
 from app import journeys as journeys_mod
 from app.panel import stats
-from app.trips import get_trip
+from app.trips import get_trip, parse_trip_ts, range_trips
 
 router = APIRouter(prefix="/api/panel")
 
@@ -85,11 +85,20 @@ def trips(request: Request, month: str | None = None) -> dict:
 def trip(request: Request, trip_id: str) -> dict:
     state = request.app.state
     db = state.readers.get()
-    found = get_trip(db, trip_id)
+    all_trips = state.trip_cache.all_trips(db)
+    ts = parse_trip_ts(trip_id)
+    meta = None if ts is None else next(
+        (t for t in all_trips if t.start_ts <= ts <= t.end_ts), None)
+    found = None
+    if meta is not None:
+        found = next((t for t in range_trips(db, meta.start_ts, meta.end_ts)
+                      if t.start_ts == meta.start_ts), None)
+    if found is None:
+        found = get_trip(db, trip_id)
     if found is None:
         raise HTTPException(status_code=404, detail="trip not found")
     jid = journeys_mod.journey_of(
-        found, journeys_mod.load_journeys(db), state.trip_cache.all_trips(db))
+        found, journeys_mod.load_journeys(db), all_trips)
     return {**stats.trip_detail(db, found), "journey_id": jid}
 
 

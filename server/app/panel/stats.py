@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app import dtc as dtc_mod
 from app.journeys import Item, JourneyView
-from app.trips import Trip, get_trip
+from app.trips import Trip, get_trip, range_trips
 
 _MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
 
@@ -206,7 +206,9 @@ def journey_detail(conn: sqlite3.Connection, view: JourneyView) -> dict | None:
     """Detail of a journey; None if a segment can no longer be loaded."""
     segs = []
     for seg in view.segments:
-        full = get_trip(conn, seg.id)
+        full = next((t for t in range_trips(conn, seg.start_ts, seg.end_ts) if t.id == seg.id), None)
+        if full is None:
+            full = get_trip(conn, seg.id)
         if full is None:
             return None
         segs.append(full)
