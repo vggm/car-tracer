@@ -67,4 +67,60 @@ class TraceRecorderTest {
         assertTrue(out.contains("…(") && out.contains("líneas omitidas)…"))
         assertEquals(rec.lastExchanges(1).single(), out.lines().last())
     }
+
+    @Test
+    fun boundsMemoryOverLongSessions() = runTest {
+        val rec = TraceRecorder(Fake("OK>", step = 0), { 0L })
+        rec.begin("HEADER")
+        repeat(10_000) { rec.command("C$it") }
+        assertTrue(rec.storedLineCount() <= 120)
+        assertEquals((9_980 until 10_000).map { "+0 > C$it | OK> | 0" }, rec.lastExchanges(20))
+        val out = rec.render()
+        assertTrue(out.length <= 4000)
+        assertTrue(out.startsWith("HEADER"))
+        assertEquals("+0 > C9999 | OK> | 0", out.lines().last())
+        val omitted = Regex("""…\((\d+) líneas omitidas\)…""").find(out)!!.groupValues[1].toInt()
+        val shown = out.lines().count { it.startsWith("+") }
+        assertEquals(10_000, shown + omitted)
+    }
+
+    @Test
+    fun capsLongLinesAndEscapesCommand() = runTest {
+        val rec = TraceRecorder(Fake("y".repeat(2000)), { 0L })
+        rec.begin("H")
+        rec.command("A\rT")
+        val line = rec.lastExchanges(1).single()
+        assertTrue(line.length <= 600 && line.contains("…"))
+        assertTrue(line.startsWith("+0 > A⏎T | "))
+    }
+
+    @Test
+    fun noteAndBeginReset() = runTest {
+        var now = 5L
+        val rec = TraceRecorder(Fake("OK>", step = 0), { now })
+        rec.begin("H1")
+        rec.command("A")
+        now = 12
+        rec.note("glued=1")
+        assertEquals("+7 # glued=1", rec.lastExchanges(1).single())
+        rec.begin("H2")
+        assertEquals("H2", rec.render())
+        assertEquals(emptyList<String>(), rec.lastExchanges(5))
+    }
+
+    @Test
+    fun openRecordsOkAndErr() = runTest {
+        val ok = TraceRecorder(Fake(), { 0L })
+        ok.begin("H")
+        ok.open()
+        assertEquals("+0 > open | OK | 0", ok.lastExchanges(1).single())
+        val bad = TraceRecorder(object : ElmTransport {
+            override suspend fun open() { throw IOException("no route") }
+            override suspend fun command(cmd: String, timeoutMs: Long) = ""
+            override fun close() {}
+        }, { 0L })
+        bad.begin("H")
+        try { bad.open(); fail("expected") } catch (e: IOException) { }
+        assertTrue(bad.lastExchanges(1).single().endsWith("| ERR no route"))
+    }
 }

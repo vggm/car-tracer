@@ -1,51 +1,81 @@
 package dev.lnk.cartrace.obd
 
+import dev.lnk.cartrace.contract.MAX_TRACE_DETAIL
 import kotlinx.coroutines.CancellationException
 
 /** Decorator that records every raw ELM327 exchange of one connection attempt for diagnostics. */
 class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Long) : ElmTransport {
-    private val lines = ArrayList<String>()
+    private val lock = Any()
+    private val headLines = ArrayList<String>()
+    private val tailLines = ArrayDeque<String>()
+    private var dropped = 0
     private var header = ""
     private var startMs = nowMs()
 
     /** Resets the recorded lines and starts the attempt clock. */
     fun begin(header: String) {
-        synchronized(lines) {
+        synchronized(lock) {
             this.header = header
-            lines.clear()
+            headLines.clear()
+            tailLines.clear()
+            dropped = 0
             startMs = nowMs()
         }
     }
 
     /** Appends a free-form line, e.g. `glued=1`. */
     fun note(text: String) {
-        synchronized(lines) { lines.add("+${nowMs() - startMs} # ${escapeRaw(text)}") }
+        synchronized(lock) { store("+${offset(nowMs())} # ${escapeRaw(text)}") }
     }
 
-    fun lastExchanges(n: Int): List<String> = synchronized(lines) { lines.takeLast(n) }
+    fun lastExchanges(n: Int): List<String> = synchronized(lock) { (headLines + tailLines).takeLast(n) }
 
-    /** Header plus lines; when over [maxChars] the middle is cut, keeping head and tail. */
-    fun render(maxChars: Int = DEFAULT_MAX_CHARS): String {
-        val (head, all) = synchronized(lines) { header to lines.toList() }
-        val full = (listOf(head) + all).joinToString("\n")
-        if (full.length <= maxChars) return full
+    internal fun storedLineCount(): Int = synchronized(lock) { headLines.size + tailLines.size }
+
+    /** Header plus lines; when lines were dropped or the text exceeds [maxChars] the middle is cut. */
+    fun render(maxChars: Int = MAX_TRACE_DETAIL): String {
+        val (head, all, headSize, droppedNow) = synchronized(lock) {
+            Snapshot(header, headLines + tailLines, headLines.size, dropped)
+        }
+        if (droppedNow == 0) {
+            val full = (listOf(head) + all).joinToString("\n")
+            if (full.length <= maxChars) return full
+        }
+        val maxH = if (droppedNow > 0) headSize else all.size
+        val maxT = if (droppedNow > 0) all.size - headSize else all.size
 
         fun build(keepHead: Int, keepTail: Int): String {
-            val omitted = all.size - keepHead - keepTail
+            val omitted = droppedNow + all.size - keepHead - keepTail
             return (listOf(head) + all.take(keepHead) + "…($omitted líneas omitidas)…" + all.takeLast(keepTail))
                 .joinToString("\n")
         }
         // Grow head and tail alternately while it still fits; the last line is always kept.
         var h = 0
-        var t = if (all.isEmpty()) 0 else 1
+        var t = if (maxT > 0) 1 else 0
         while (h + t < all.size) {
-            if (build(h + 1, t).length > maxChars) break
-            h++
+            if (h < maxH && build(h + 1, t).length <= maxChars) h++ else if (h >= maxH) { /* head full */ } else break
             if (h + t >= all.size) break
-            if (build(h, t + 1).length > maxChars) break
-            t++
+            if (t < maxT && build(h, t + 1).length <= maxChars) t++ else if (t >= maxT) { if (h >= maxH) break } else break
         }
         return build(h, t).take(maxChars)
+    }
+
+    private data class Snapshot(val header: String, val all: List<String>, val headSize: Int, val dropped: Int)
+
+    private fun offset(at: Long) = maxOf(0L, at - startMs)
+
+    /** Must be called holding [lock]. */
+    private fun store(line: String) {
+        val capped = if (line.length > MAX_LINE) line.take(MAX_LINE - 1) + "…" else line
+        if (headLines.size < KEEP) {
+            headLines.add(capped)
+        } else {
+            tailLines.addLast(capped)
+            if (tailLines.size > KEEP) {
+                tailLines.removeFirst()
+                dropped++
+            }
+        }
     }
 
     override suspend fun open() {
@@ -56,7 +86,7 @@ class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Lo
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            add(t0, "open", "", e.message ?: e::class.java.simpleName)
+            add(t0, "open", "", escapeRaw(e.message ?: e::class.java.simpleName))
             throw e
         }
     }
@@ -65,12 +95,12 @@ class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Lo
         val t0 = nowMs()
         try {
             val response = inner.command(cmd, timeoutMs)
-            add(t0, cmd, escapeRaw(response), null)
+            add(t0, escapeRaw(cmd), escapeRaw(response), null)
             return response
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            add(t0, cmd, "", e.message ?: e::class.java.simpleName)
+            add(t0, escapeRaw(cmd), "", escapeRaw(e.message ?: e::class.java.simpleName))
             throw e
         }
     }
@@ -78,12 +108,15 @@ class TraceRecorder(private val inner: ElmTransport, private val nowMs: () -> Lo
     override fun close() = inner.close()
 
     private fun add(t0: Long, cmd: String, response: String, err: String?) {
-        val line = "+${t0 - startMs} > $cmd | $response | ${nowMs() - t0}" + (err?.let { " | ERR $it" } ?: "")
-        synchronized(lines) { lines.add(line) }
+        val dur = maxOf(0L, nowMs() - t0)
+        synchronized(lock) {
+            store("+${offset(t0)} > $cmd | $response | $dur" + (err?.let { " | ERR $it" } ?: ""))
+        }
     }
 
-    companion object {
-        const val DEFAULT_MAX_CHARS = 4000
+    private companion object {
+        const val KEEP = 60
+        const val MAX_LINE = 600
     }
 }
 
@@ -91,7 +124,9 @@ internal fun escapeRaw(s: String): String = buildString {
     for (c in s) when {
         c == '\r' -> append('⏎')
         c == '\n' -> append('↵')
-        c.code < 0x20 || c.code == 0x7f -> append("\\x%02X".format(c.code))
+        c.code < 0x20 || c.code == 0x7f -> append("\\x").append(HEX[c.code shr 4]).append(HEX[c.code and 15])
         else -> append(c)
     }
 }
+
+private const val HEX = "0123456789ABCDEF"
