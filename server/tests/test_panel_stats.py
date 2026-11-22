@@ -187,3 +187,14 @@ def test_dtc_state_none_and_described(tmp_path):
         "active": [{"code": "P0401", "desc": describe("P0401")}],
         "pending": [{"code": "P0409", "desc": describe("P0409")}],
     }
+
+
+def test_with_gaps_same_day_and_midnight():
+    a = make_trip(utc(2026, 11, 10, 10), drive_ms=600_000)
+    b = make_trip(utc(2026, 11, 10, 11), drive_ms=600_000)
+    c = make_trip(utc(2026, 11, 10, 23, 30), drive_ms=600_000)
+    out = stats.with_gaps([c, b, a], TZ)
+    assert [o["kind"] for o in out] == ["trip"] * 3
+    assert out[0]["gap_before_ms"] is None  # b ends 12:10 UTC, c starts 00:30 Madrid next day
+    assert out[1]["gap_before_ms"] == 3_000_000
+    assert out[2]["gap_before_ms"] is None

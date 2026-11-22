@@ -1,11 +1,15 @@
 """Read-only JSON API for the web panel."""
+import contextlib
 import threading
 import time
 from dataclasses import asdict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 
 from app.alerts import compute_alerts, recent_count
+from app import db as db_mod
+from app import journeys as journeys_mod
 from app.panel import stats
 from app.trips import get_trip
 
@@ -49,12 +53,13 @@ def overview(request: Request, month: str | None = None) -> dict:
     tz = state.settings.tz
     year, mon = _month(request, month)
     trips = state.trip_cache.all_trips(db)
+    items = journeys_mod.group_items(trips, journeys_mod.load_journeys(db))
     alerts = _alerts(state, db)
     return {
         "month": _month_str(year, mon),
-        "totals": stats.totals(stats.trips_in_month(trips, year, mon, tz)),
-        "months": stats.months_series(trips, year, mon, tz),
-        "days": stats.days_series(trips, year, mon, tz),
+        "totals": stats.totals(stats.items_in_month(items, year, mon, tz)),
+        "months": stats.months_series(items, year, mon, tz),
+        "days": stats.days_series(items, year, mon, tz),
         "alerts_recent": recent_count(alerts, state.clock()),
     }
 
@@ -63,13 +68,16 @@ def overview(request: Request, month: str | None = None) -> dict:
 def trips(request: Request, month: str | None = None) -> dict:
     state = request.app.state
     db = state.readers.get()
+    tz = state.settings.tz
     year, mon = _month(request, month)
-    in_month = stats.trips_in_month(
-        state.trip_cache.all_trips(db), year, mon, state.settings.tz)
-    in_month = sorted(in_month, key=lambda t: t.start_ts, reverse=True)
+    items = journeys_mod.group_items(
+        state.trip_cache.all_trips(db), journeys_mod.load_journeys(db))
+    # group_items is newest first; gaps look at the next (older) item of the whole list
+    gapped = stats.with_gaps(items, tz)
+    key = _month_str(year, mon)
     return {
-        "month": _month_str(year, mon),
-        "trips": [stats.trip_summary(t) for t in in_month],
+        "month": key,
+        "trips": [g for g, i in zip(gapped, items) if stats.month_key(i.start_ts, tz) == key],
     }
 
 
@@ -80,7 +88,51 @@ def trip(request: Request, trip_id: str) -> dict:
     found = get_trip(db, trip_id)
     if found is None:
         raise HTTPException(status_code=404, detail="trip not found")
-    return stats.trip_detail(db, found)
+    jid = journeys_mod.journey_of(
+        found, journeys_mod.load_journeys(db), state.trip_cache.all_trips(db))
+    return {**stats.trip_detail(db, found), "journey_id": jid}
+
+
+@router.get("/journeys/{jid}")
+def journey(request: Request, jid: str) -> dict:
+    state = request.app.state
+    db = state.readers.get()
+    n = journeys_mod.parse_journey_id(jid)
+    view = None if n is None else journeys_mod.find_journey(
+        state.trip_cache.all_trips(db), journeys_mod.load_journeys(db), n)
+    detail = None if view is None else stats.journey_detail(db, view)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="journey not found")
+    return detail
+
+
+class JoinBody(BaseModel):
+    trip_ids: list[str] = Field(min_length=2, max_length=2)
+
+
+@router.post("/journeys", status_code=201)
+def join_journey(request: Request, body: JoinBody) -> dict:
+    state = request.app.state
+    trips_ = state.trip_cache.all_trips(state.readers.get())
+    with contextlib.closing(db_mod.connect(state.settings.db_path)) as conn:
+        try:
+            n = journeys_mod.join(conn, trips_, body.trip_ids[0], body.trip_ids[1], state.clock())
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+    state.alerts_memo = None
+    return {"id": f"v{n}"}
+
+
+@router.delete("/journeys/{jid}", status_code=204)
+def separate_journey(request: Request, jid: str) -> Response:
+    state = request.app.state
+    n = journeys_mod.parse_journey_id(jid)
+    with contextlib.closing(db_mod.connect(state.settings.db_path)) as conn:
+        removed = n is not None and journeys_mod.separate(conn, n)
+    if not removed:
+        raise HTTPException(status_code=404, detail="journey not found")
+    state.alerts_memo = None
+    return Response(status_code=204)
 
 
 @router.get("/dtc")
