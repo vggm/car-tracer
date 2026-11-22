@@ -34,6 +34,36 @@ class SupervisorTest {
     }
 
     @Test
+    fun crashCallsOnCrash() = runTest {
+        var runs = 0
+        val crashes = mutableListOf<Pair<String, Throwable>>()
+        val job = Supervisor(this, onCrash = { n, e -> crashes += n to e }).launch("child") {
+            runs++
+            if (runs == 1) throw IllegalStateException("boom")
+            kotlinx.coroutines.awaitCancellation()
+        }
+        runCurrent()
+        assertEquals(1, crashes.size)
+        assertEquals("child", crashes[0].first)
+        assertEquals("boom", crashes[0].second.message)
+        job.cancel()
+    }
+
+    @Test
+    fun throwingOnCrashDoesNotKillSupervisor() = runTest {
+        var runs = 0
+        val job = Supervisor(this, onCrash = { _, _ -> error("diag broke") }).launch("child") {
+            runs++
+            if (runs == 1) throw IllegalStateException("boom")
+            kotlinx.coroutines.awaitCancellation()
+        }
+        runCurrent()
+        advanceTimeBy(5_000); runCurrent()
+        assertEquals(2, runs)
+        job.cancel()
+    }
+
+    @Test
     fun supervisorDoesNotRestartOnCancel() = runTest {
         var runs = 0
         val job = Supervisor(this).launch("child") {

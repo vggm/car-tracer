@@ -12,11 +12,15 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 TS_MIN_MS = 1704067200000  # 2024-01-01 UTC
 TS_MAX_AHEAD_MS = 300_000  # now + 5 min
 MAX_RECORDS = 500
+
+DETAIL_DEFAULT_MAX = 200
+DETAIL_LIMITS = {"obd_trace": 4000, "diag": 500}
 
 _OBD_KEY = re.compile(r"^[a-z0-9_]{1,32}$")
 
@@ -58,8 +62,7 @@ class GpsRecord(_Base):
     alt_m: Float | None = None
 
 
-class ObdRecord(_Base):
-    type: Literal["obd"]
+class _ValuesRecord(_Base):
     values: dict[str, Num] = Field(min_length=1)
 
     @field_validator("values")
@@ -67,8 +70,16 @@ class ObdRecord(_Base):
     def _keys(cls, v: dict) -> dict:
         for k in v:
             if not _OBD_KEY.match(k):
-                raise ValueError(f"invalid obd key: {k!r}")
+                raise ValueError(f"invalid values key: {k!r}")
         return v
+
+
+class ObdRecord(_ValuesRecord):
+    type: Literal["obd"]
+
+
+class HealthRecord(_ValuesRecord):
+    type: Literal["health"]
 
 
 class DtcRecord(_Base):
@@ -80,11 +91,18 @@ class DtcRecord(_Base):
 class EventRecord(_Base):
     type: Literal["event"]
     event: Literal["session_start", "resumed", "obd_connected", "obd_lost", "obd_error",
-                   "dtc_scan", "dtc_scan_failed", "dtc_clear", "dtc_clear_failed", "obd_attempt_failed"]
-    detail: str | None = Field(default=None, max_length=200)
+                   "dtc_scan", "dtc_scan_failed", "dtc_clear", "dtc_clear_failed", "obd_attempt_failed", "obd_trace", "diag"]
+    detail: str | None = None
+
+    @model_validator(mode="after")
+    def _detail_limit(self) -> "EventRecord":
+        limit = DETAIL_LIMITS.get(self.event, DETAIL_DEFAULT_MAX)
+        if self.detail is not None and len(self.detail) > limit:
+            raise ValueError(f"detail: too long for {self.event} (max {limit})")
+        return self
 
 
-Record = Union[GpsRecord, ObdRecord, DtcRecord, EventRecord]
+Record = Union[GpsRecord, ObdRecord, DtcRecord, EventRecord, HealthRecord]
 _adapter: TypeAdapter[Record] = TypeAdapter(
     Annotated[Record, Field(discriminator="type")]
 )

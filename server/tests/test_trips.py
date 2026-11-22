@@ -330,3 +330,15 @@ def test_before_ts_inside_merged_group(tmp_path):
     assert [t.start_ts for t in older] == [0] and more is False
     only, more = list_trips(conn, before_ts=inside, limit=5)
     assert [t.start_ts for t in only] == [1_000_000, 0] and more is False
+
+
+def test_health_heartbeats_do_not_bridge_trips(tmp_path):
+    """App bookkeeping (health, obd_trace/diag events) must not join trips across a real stop."""
+    conn = _conn(tmp_path)
+    drive(conn, 0, 600, session="a")
+    for ts in range(600_000, 830_001, 30_000):
+        add(conn, ts, "health", {"battery": 80}, session="hb")
+        add(conn, ts + 1, "event", {"event": "diag", "detail": None}, session="hb")
+    drive(conn, 830_000, 600, session="b", north0=6000)
+    trips, _ = list_trips(conn)
+    assert len(trips) == 2

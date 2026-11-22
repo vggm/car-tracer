@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from app.location import (
+    DRIVING_SQL,
     MAX_ACC_M,
     MAX_SPEED_MPS,
     MOVING_MIN_KMH,
@@ -157,7 +158,7 @@ def session_spans(conn: sqlite3.Connection) -> list[SessionSpan]:
         SessionSpan(sid, min_ts, max_ts, count)
         for sid, min_ts, max_ts, count in conn.execute(
             "SELECT session_id, MIN(ts), MAX(ts), COUNT(*) FROM records"
-            " GROUP BY session_id ORDER BY 2, 1"
+            f" WHERE {DRIVING_SQL} GROUP BY session_id ORDER BY 2, 1"
         )
     ]
 
@@ -180,7 +181,8 @@ def range_trips(conn: sqlite3.Connection, min_ts: int, max_ts: int) -> list[Trip
     """Trips of all records with ts in [min_ts, max_ts], regardless of session, oldest first."""
     segments: list[list[tuple[int, str, dict]]] = []
     for ts, t, d in conn.execute(
-        "SELECT ts, type, data FROM records WHERE ts BETWEEN ? AND ? ORDER BY ts, seq",
+        f"SELECT ts, type, data FROM records WHERE ts BETWEEN ? AND ? AND {DRIVING_SQL}"
+        " ORDER BY ts, seq",
         (min_ts, max_ts),
     ):
         row = (ts, t, json.loads(d))

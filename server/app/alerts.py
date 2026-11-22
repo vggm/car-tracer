@@ -151,6 +151,7 @@ def _obd_alerts(conn, trips, since, now_ms, tz) -> list[Alert]:
 
 
 def _stale(conn, trips, now_ms, tz) -> list[Alert]:
+    # Deliberately counts every type, health included: a heartbeat means the app is alive.
     row = conn.execute(
         "SELECT session_id, ts FROM records ORDER BY ts DESC, seq DESC LIMIT 1"
     ).fetchone()
