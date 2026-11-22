@@ -1,12 +1,32 @@
 """Read-only JSON API for the web panel."""
+import threading
+import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
 
 from app.alerts import compute_alerts, recent_count
 from app.panel import stats
+from app.trips import get_trip
 
 router = APIRouter(prefix="/api/panel")
+
+ALERTS_TTL_S = 60
+_mono = time.monotonic
+_alerts_lock = threading.Lock()
+
+
+def _alerts(state, db) -> list:
+    """compute_alerts memoized for ALERTS_TTL_S, invalidated when any session changes."""
+    trips, fingerprint = state.trip_cache.snapshot(db)
+    with _alerts_lock:
+        memo = state.alerts_memo
+        if memo is not None and memo[0] == fingerprint and _mono() < memo[1]:
+            return memo[2]
+    found = compute_alerts(db, trips, state.clock(), state.settings.tz)
+    with _alerts_lock:
+        state.alerts_memo = (fingerprint, _mono() + ALERTS_TTL_S, found)
+    return found
 
 
 def _month(request: Request, month: str | None) -> tuple[int, int]:
@@ -29,7 +49,7 @@ def overview(request: Request, month: str | None = None) -> dict:
     tz = state.settings.tz
     year, mon = _month(request, month)
     trips = state.trip_cache.all_trips(db)
-    alerts = compute_alerts(db, trips, state.clock(), tz)
+    alerts = _alerts(state, db)
     return {
         "month": _month_str(year, mon),
         "totals": stats.totals(stats.trips_in_month(trips, year, mon, tz)),
@@ -57,7 +77,7 @@ def trips(request: Request, month: str | None = None) -> dict:
 def trip(request: Request, trip_id: str) -> dict:
     state = request.app.state
     db = state.readers.get()
-    found = state.trip_cache.get(db, trip_id)
+    found = get_trip(db, trip_id)
     if found is None:
         raise HTTPException(status_code=404, detail="trip not found")
     return stats.trip_detail(db, found)
@@ -73,6 +93,5 @@ def dtc(request: Request) -> dict:
 def alerts(request: Request) -> dict:
     state = request.app.state
     db = state.readers.get()
-    trips_ = state.trip_cache.all_trips(db)
-    found = compute_alerts(db, trips_, state.clock(), state.settings.tz)
+    found = _alerts(state, db)
     return {"alerts": [asdict(a) for a in found]}

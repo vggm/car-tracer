@@ -96,3 +96,10 @@ def test_get_returns_trip_and_none_for_unknown(tmp_path):
     assert cache.get(conn, trip.id) == trip
     assert cache.get(conn, "nope") is None
     assert cache.get(conn, "s1:999") is None
+
+
+def test_cached_trips_do_not_hold_points(tmp_path):
+    conn = _conn(tmp_path)
+    drive(conn, 0, 300)
+    trips = TripCache().all_trips(conn)
+    assert trips and all(t.points == [] for t in trips)
