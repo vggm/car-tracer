@@ -25,13 +25,16 @@ _RESET_CMDS = {"ATZ", "ATWS"}
 
 def _norm(row):
     """Accept dicts {ts,type,data} or (ts,type,data) tuples; data may be a JSON string."""
+    session = None
     if isinstance(row, dict):
         ts, typ, data = row.get("ts"), row.get("type"), row.get("data")
+        session = row.get("session")
         if data is None:
             data = {k: v for k, v in row.items() if k not in ("ts", "type")}
     else:
         try:
             ts, typ, data = row[0], row[1], row[2]
+            session = row[3] if len(row) > 3 else None
         except Exception:
             return None
     if isinstance(data, (str, bytes)):
@@ -41,7 +44,8 @@ def _norm(row):
             data = {}
     if not isinstance(data, dict):
         data = {}
-    return {"ts": ts if isinstance(ts, (int, float)) else 0, "type": typ, "data": data}
+    return {"ts": ts if isinstance(ts, (int, float)) else 0, "type": typ, "data": data,
+            "session": session}
 
 
 def _events(rows, *names):
@@ -134,11 +138,46 @@ def probe_summary(rows):
             if c in _RESET_CMDS:
                 break
             if c == "0100":
-                probe = ("sesión viva (41 00)"
-                         if "4100" in re.sub(r"[\s⏎↵>]", "", resp) else "0100 sin datos")
+                if "4100" in re.sub(r"[\s⏎↵>]", "", resp):
+                    probe = "sesión viva (41 00)"
+                elif _err and "timeout" in _err.lower():
+                    probe = "0100 timeout"
+                else:
+                    probe = "0100 sin datos"
         res = t["attrs"].get("result", "?")
         table[(probe, res)] = table.get((probe, res), 0) + 1
     return table, stats
+
+
+_VOLTS = re.compile(r"(\d+(?:\.\d+)?)\s*V", re.I)
+
+
+def _probe_volts(lines):
+    """Volts from the ATRV answer among the probe lines (before the first reset), or None."""
+    for _ms, cmd, resp, _dur, _err in lines:
+        c = cmd.strip().upper()
+        if c in _RESET_CMDS:
+            break
+        if c == "ATRV":
+            m = _VOLTS.search(resp)
+            if m:
+                return m.group(1)
+    return None
+
+
+def sessions_summary(rows):
+    """{session: [{"n","variant","result","age","volts"}]} per session with attempt traces, in order."""
+    out = {}
+    for r in sorted(_events(rows, "obd_trace"), key=lambda r: r["ts"]):
+        t = parse_trace(_detail(r))
+        if t is None or t["kind"] != "attempt":
+            continue
+        a = t["attrs"]
+        out.setdefault(r.get("session") or "?", []).append({
+            "n": a.get("n", "?"), "variant": a.get("variant", "?"),
+            "result": a.get("result", "?"), "age": a.get("session_age", "?"),
+            "volts": _probe_volts(t["lines"]) or "?"})
+    return out
 
 
 def health_summary(rows):
@@ -188,6 +227,15 @@ def render(rows, traces_n, out):
     p(f"trazas={st['traces']} intentos={st['attempts']} lost={st['lost']} "
       f"glued={st['glued']} sin_parsear={st['unparsed']}")
     p()
+    p("== Sesiones ==")
+    ss = sessions_summary(rows)
+    if not ss:
+        p("(sin trazas de intento)")
+    for sid, atts in ss.items():
+        p(f"sesión {sid}")
+        for a in atts:
+            p(f"  {a['n']} {a['variant']} {a['result']} {a['age']} v={a['volts']}")
+    p()
     p(f"== Trazas (últimas {traces_n}) ==")
     traces = (sorted(_events(rows, "obd_trace"), key=lambda r: r["ts"])[-traces_n:]
               if traces_n > 0 else [])
@@ -227,9 +275,10 @@ def load_rows(db, hours, now_ms=None):
     conn = sqlite3.connect(uri, uri=True)
     try:
         cur = conn.execute(
-            "SELECT ts, type, data FROM records WHERE ts >= ? AND type IN "
+            "SELECT ts, type, data, session_id FROM records WHERE ts >= ? AND type IN "
             "('event','health') ORDER BY ts", (since,))
-        return [{"ts": ts, "type": typ, "data": data} for ts, typ, data in cur]
+        return [{"ts": ts, "type": typ, "data": data, "session": sid}
+                for ts, typ, data, sid in cur]
     finally:
         conn.close()
 

@@ -76,7 +76,7 @@ def test_probe_cross():
     table, st = dr.probe_summary(seeded_rows())
     assert dr.parse_trace(TRACE_OK)["unparsed"] == 0
     assert table[("sesión viva (41 00)", "ok")] == 1
-    assert table[("0100 sin datos", "fail")] == 1
+    assert table[("0100 timeout", "fail")] == 1
     assert st["glued"] == 2 and st["unparsed"] == 2 and st["attempts"] == 2
 
 
@@ -100,3 +100,46 @@ def test_report_sections_from_db(tmp_path):
     assert "V1:" not in text  # outside --hours window
     assert "huecos sin latido (>10 min): 1" in text
     assert "max queue_pending=9" in text
+
+
+def test_probe_separates_timeout_from_no_data():
+    table, _ = dr.probe_summary(
+        [ev("obd_trace", "attempt n=1 variant=V1 session_age=5s result=fail\n"
+                         "+0 > 0100 | ⏎> | 2000 | ERR timeout after 2000ms\n"
+                         "+2100 > ATZ | ELM327 v1.5⏎⏎> | 900"),
+         ev("obd_trace", "attempt n=2 variant=V2 session_age=9s result=fail\n"
+                         "+0 > 0100 | NO DATA⏎⏎> | 300\n"
+                         "+400 > ATZ | ELM327 v1.5⏎⏎> | 900")])
+    assert table[("0100 timeout", "fail")] == 1
+    assert table[("0100 sin datos", "fail")] == 1
+
+
+def _att(n, var, age, res, volts):
+    return ev("obd_trace",
+              f"attempt n={n} variant={var} session_age={age} result={res}\n"
+              "+0 > open | OK | 5\n"
+              f"+10 > ATRV | {volts}⏎⏎> | 40\n"
+              "+60 > 0100 | ⏎> | 2000 | ERR timeout\n"
+              "+2100 > ATZ | ELM327 v1.5⏎⏎> | 900\n"
+              f"+3000 > ATRV | 14.9V⏎⏎> | 40", ts=NOW + n)
+
+
+def test_sessions_summary_lists_attempts_in_order_with_probe_volts():
+    rows = [
+        {**_att(2, "V2", "20s", "fail", "12.4V"), "session": "A"},
+        {**_att(1, "V1", "5s", "fail", "11.9V"), "session": "A"},
+        {**ev("obd_trace", "attempt n=1 variant=V3 session_age=7s result=ok\n+0 > open | OK | 5",
+              ts=NOW + 9), "session": "B"},
+        {**ev("obd_trace", "lost n=1 variant=V1", ts=NOW + 10), "session": "B"},
+    ]
+    ss = dr.sessions_summary(rows)
+    assert ss["A"] == [
+        {"n": "1", "variant": "V1", "result": "fail", "age": "5s", "volts": "11.9"},
+        {"n": "2", "variant": "V2", "result": "fail", "age": "20s", "volts": "12.4"},
+    ]
+    assert ss["B"][0]["volts"] == "?" and len(ss["B"]) == 1
+    buf = io.StringIO()
+    dr.render(rows, 0, buf)
+    text = buf.getvalue()
+    assert "== Sesiones ==" in text
+    assert "  1 V1 fail 5s v=11.9" in text and "  2 V2 fail 20s v=12.4" in text
