@@ -1,10 +1,11 @@
 import { start } from "./router.js";
-import { getJSON } from "./api.js";
+import { getAlerts } from "./api.js";
 import * as overview from "./overview.js";
 import * as trips from "./trips.js";
 import * as trip from "./trip.js";
 import * as dtc from "./dtc.js";
 import * as alerts from "./alerts.js";
+import { readSeen, WEEK } from "./alerts.js";
 
 const routes = [
   { re: /^\/resumen(?:\/(\d{4}-\d{2}))?$/, view: overview },
@@ -23,26 +24,16 @@ function markActive(path) {
   });
 }
 
-const SEEN_KEY = "ct.alertsSeenTs";
 let cache = null; // { at, alerts }
-
-function seenTs() {
-  try {
-    const v = Number(localStorage.getItem(SEEN_KEY));
-    return Number.isFinite(v) ? v : 0;
-  } catch (e) {
-    return 0;
-  }
-}
 
 function paintBadge(alerts) {
   const badge = document.getElementById("alerts-badge");
-  const since = Date.now() - 7 * 86400000;
-  const seen = seenTs();
-  const n = alerts.filter((a) => a.ts >= since && a.ts > seen).length;
+  const since = Date.now() - WEEK;
+  const seen = readSeen();
+  const n = alerts.filter((a) => a.ts >= since && !seen.has(a.id)).length;
   if (n > 0) {
     badge.textContent = String(n);
-    badge.setAttribute("aria-label", n === 1 ? "1 aviso reciente" : `${n} avisos recientes`);
+    badge.setAttribute("aria-label", n === 1 ? "1 aviso nuevo" : `${n} avisos nuevos`);
     badge.hidden = false;
   } else {
     badge.hidden = true;
@@ -52,7 +43,7 @@ function paintBadge(alerts) {
 async function loadBadge() {
   try {
     if (!cache || Date.now() - cache.at >= 60000) {
-      const data = await getJSON("/api/panel/alerts");
+      const data = await getAlerts();
       cache = { at: Date.now(), alerts: data.alerts || [] };
     }
     paintBadge(cache.alerts);

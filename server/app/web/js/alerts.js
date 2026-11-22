@@ -1,4 +1,4 @@
-import { getJSON } from "./api.js";
+import { getAlerts } from "./api.js";
 import { el, emptyState, load } from "./ui.js";
 import { rel } from "./fmt.js";
 
@@ -8,21 +8,29 @@ function href(a) {
   return null;
 }
 
-const SEEN_KEY = "ct.alertsSeenTs";
+const SEEN_KEY = "ct.alertsSeenIds";
+const OLD_KEY = "ct.alertsSeenTs";
+export const WEEK = 7 * 86400000;
 
-function readSeen() {
+export function readSeen() {
   try {
-    const v = Number(localStorage.getItem(SEEN_KEY));
-    return Number.isFinite(v) ? v : 0;
+    localStorage.removeItem(OLD_KEY); // migración silenciosa
   } catch (e) {
-    return 0;
+    /* sin almacenamiento */
+  }
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]");
+    return new Set(Array.isArray(v) ? v : []);
+  } catch (e) {
+    return new Set();
   }
 }
 
 function markSeen(alerts) {
-  const ts = alerts.length ? Math.max(...alerts.map((a) => a.ts)) : Date.now();
+  const since = Date.now() - WEEK;
+  const ids = alerts.filter((a) => a.ts >= since).map((a) => a.id);
   try {
-    localStorage.setItem(SEEN_KEY, String(ts));
+    localStorage.setItem(SEEN_KEY, JSON.stringify(ids));
   } catch (e) {
     /* modo privado */
   }
@@ -35,7 +43,7 @@ function item(a, prevSeen) {
     el("span", { class: `dot ${a.severity}` }),
     el("div", { class: "alert-main" },
       el("div", { class: "alert-title" }, a.title,
-        a.ts > prevSeen && a.ts >= Date.now() - 7 * 86400000 ? el("span", { class: "tag accent", style: "margin-left:.5em" }, "nuevo") : null),
+        !prevSeen.has(a.id) && a.ts >= Date.now() - WEEK ? el("span", { class: "tag accent", style: "margin-left:.5em" }, "nuevo") : null),
       a.detail ? el("div", { class: "alert-detail" }, a.detail) : null),
     el("div", { class: "alert-ts" }, rel(a.ts)),
   ];
@@ -59,7 +67,7 @@ export async function render(main) {
   main.append(el("h1", { class: "page-title" }, "Avisos"));
   const box = el("div", { class: "alert-list" });
   main.append(box);
-  await load(box, () => getJSON("/api/panel/alerts"), (d) => {
+  await load(box, () => getAlerts(), (d) => {
     if (!d.alerts.length) {
       const e = emptyState("Todo en orden");
       e.prepend(checkIcon());

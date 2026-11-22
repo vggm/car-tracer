@@ -5,6 +5,7 @@ const NS = "http://www.w3.org/2000/svg";
 const fMon = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", month: "long" });
 const abbr = (name) => name.slice(0, 3);
 const DAY = 86400000;
+const rootPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 
 function s(tag, attrs = {}, ...children) {
   const n = document.createElementNS(NS, tag);
@@ -145,12 +146,24 @@ export function heatmap(days, { endDate, today }) {
     if (byKey && link) link.focus({ preventScroll: true });
   }
 
+  // Etiquetas en px reales (≈0,62 rem) aunque el SVG se escale: se compensa con el factor de escala.
+  let hro = null;
+  if (typeof ResizeObserver !== "undefined") {
+    const fit = () => {
+      const rw = svg.getBoundingClientRect().width;
+      if (rw > 0) svg.style.setProperty("--hm-fs", `${((rootPx() * 0.62) / (rw / w)).toFixed(2)}px`);
+    };
+    hro = new ResizeObserver(fit);
+    hro.observe(svg);
+  }
+
   svg.attachPopover = (el) => {
     host = el;
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
   };
   svg.dispose = () => {
+    if (hro) hro.disconnect();
     closePop(false);
     document.removeEventListener("pointerdown", onDown);
     document.removeEventListener("keydown", onKey);
@@ -160,12 +173,14 @@ export function heatmap(days, { endDate, today }) {
 
 export function monthBars(months, { selected, onSelect }) {
   const svg = s("svg", { class: "mb", role: "group", "aria-label": "Kilómetros por mes" });
-  const H = 176, PAD_T = 20, PAD_B = 22;
   const wide = window.matchMedia("(min-width: 900px)");
-  let built = -1;
+  let built = "";
 
-  function build(w) {
-    built = w;
+  function build(w, H) {
+    const px = rootPx();
+    built = `${w}x${H}@${px}`;
+    const PAD_T = Math.round(px * 1.6), PAD_B = Math.round(px * 1.5);
+    const valFs = `font-size:${(px * 0.75).toFixed(1)}px`, xFs = `font-size:${(px * 0.7).toFixed(1)}px`;
     svg.replaceChildren();
     svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
     const slot = w / months.length;
@@ -182,19 +197,20 @@ export function monthBars(months, { selected, onSelect }) {
         title(tip),
         s("rect", { class: "mb-hit", x: i * slot, y: 0, width: slot, height: H }),
         s("rect", { class: "mb-fill", x, y: base - bh, width: bw, height: bh, rx: 3 }),
-        s("text", { class: "mb-val", x: x + bw / 2, y: base - bh - 5, "text-anchor": "middle" }, m.km > 0 ? n0(m.km) : ""),
-        s("text", { class: "mb-x", x: x + bw / 2, y: H - 6, "text-anchor": "middle" },
+        s("text", { class: "mb-val", x: x + bw / 2, y: base - bh - Math.round(px * 0.3), "text-anchor": "middle", style: valFs }, m.km > 0 ? n0(m.km) : ""),
+        s("text", { class: "mb-x", x: x + bw / 2, y: H - Math.round(px * 0.35), "text-anchor": "middle", style: xFs },
           wide.matches ? abbr(name) : name.charAt(0).toUpperCase()));
       onActivate(g, () => onSelect && onSelect(m.month));
       svg.append(g);
     });
   }
 
-  build(336);
+  build(336, Math.round(11.733 * rootPx()));
   if (typeof ResizeObserver !== "undefined") {
     const ro = new ResizeObserver(() => {
-      const w = Math.round(svg.getBoundingClientRect().width);
-      if (w > 0 && w !== built) build(w);
+      const r = svg.getBoundingClientRect();
+      const w = Math.round(r.width), h = Math.round(r.height);
+      if (w > 0 && h > 0 && `${w}x${h}@${rootPx()}` !== built) build(w, h);
     });
     ro.observe(svg);
     svg.dispose = () => ro.disconnect();

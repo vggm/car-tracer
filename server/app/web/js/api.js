@@ -20,3 +20,10 @@ export async function getJSON(path) {
     throw new ApiError("invalid json", res.status);
   }
 }
+
+// Una sola petición de avisos en vuelo a la vez (insignia y pantalla Avisos la comparten).
+let pendingAlerts = null;
+export function getAlerts() {
+  if (!pendingAlerts) pendingAlerts = getJSON("/api/panel/alerts").finally(() => { pendingAlerts = null; });
+  return pendingAlerts;
+}

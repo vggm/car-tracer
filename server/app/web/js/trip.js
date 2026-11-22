@@ -6,7 +6,6 @@ const nil = (x) => x === null || x === undefined;
 const filled = (a) => Array.isArray(a) && a.filter((v) => !nil(v)).length >= 2;
 const SYNC = "trip-cursor";
 const fClock = new Intl.DateTimeFormat("es-ES", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const fRpm = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0, useGrouping: "always" });
 const rootPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 const H_MAIN = 14.7, H_COOL = 7.3; // rem
 
@@ -161,11 +160,9 @@ export async function render(main, params) {
             const t = e.touches[0], r = u.over.getBoundingClientRect();
             if (!t) return;
             const left = t.clientX - r.left;
-            u.setCursor({ left, top: t.clientY - r.top });
-            const x = u.posToVal(left, "x");
-            for (const o of charts) if (o !== u) o.setCursor({ left: o.valToPos(x, "x"), top: -10 });
+            u.setCursor({ left, top: t.clientY - r.top }, true, true); // pub=true: cursor.sync lo publica a los demás gráficos
           };
-          const off = () => { for (const o of charts) o.setCursor({ left: -10, top: -10 }); };
+          const off = () => u.setCursor({ left: -10, top: -10 }, true, true);
           u.over.addEventListener("touchstart", touch, { passive: true });
           u.over.addEventListener("touchmove", touch, { passive: true });
           u.over.addEventListener("touchend", off);
@@ -191,10 +188,13 @@ export async function render(main, params) {
     });
     const rowsMain = () => [
       { color: cssVar("--accent"), data: s.speed_kmh, fmt: (v) => `${n0(v)} km/h` },
-      ...(hasRpm ? [{ color: cssVar("--muted"), data: s.rpm, fmt: (v) => `${fRpm.format(v)} rpm` }] : []),
-      ...(hasCool ? [{ color: cssVar("--warn"), data: s.coolant_c, fmt: (v) => `${n0(v)} °C` }] : []),
+      ...(hasRpm ? [{ color: cssVar("--muted"), data: s.rpm, fmt: (v) => `${n0(v)} rpm` }] : []),
     ];
-    const width = () => Math.max(220, Math.floor(box.clientWidth - 32));
+    const rowsCool = () => [{ color: cssVar("--warn"), data: s.coolant_c, fmt: (v) => `${n0(v)} °C` }];
+    const width = () => {
+      const cs = getComputedStyle(box);
+      return Math.max(220, Math.floor(box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)));
+    };
 
     const build = () => {
       destroyCharts();
@@ -213,14 +213,14 @@ export async function render(main, params) {
           ...(hasRpm ? [{ label: "rpm", stroke: muted, width: 1.5, scale: "rpm", spanGaps: false }] : [])],
         scales: { x: { time: true }, kmh: { range: (u, lo, hi) => [0, Math.max(hi, 10)] }, rpm: { range: (u, lo, hi) => [0, Math.max(hi, 1000)] } },
         axes: [xAxis, axis({ scale: "kmh", label: "km/h", labelSize: Math.round(px), labelFont: fontCss }),
-          ...(hasRpm ? [axis({ scale: "rpm", side: 1, label: "rpm", labelSize: Math.round(px), labelFont: fontCss, grid: { show: false } })] : [])],
+          ...(hasRpm ? [axis({ scale: "rpm", side: 1, values: (u, vals) => vals.map(n0), label: "rpm", labelSize: Math.round(px), labelFont: fontCss, grid: { show: false } })] : [])],
       };
       const data1 = [xs, s.speed_kmh, ...(hasRpm ? [s.rpm] : [])];
       const u1 = new uPlot(main1, data1, box.querySelector('[data-chart="main"]'));
       charts.push(u1);
       if (coolBox) {
         const u2 = new uPlot({
-          ...base, width: width(), height: Math.round(H_COOL * px), cursor: cursorSync(), padding: [null, hasRpm ? Math.round(px * 4.1) : 8, null, null], plugins: [tooltip(rowsMain().slice(-1))],
+          ...base, width: width(), height: Math.round(H_COOL * px), cursor: cursorSync(), padding: [null, hasRpm ? Math.round(px * 4.1) : 8, null, null], plugins: [tooltip(rowsCool())],
           series: [{}, { label: "°C", stroke: warn, width: 2, spanGaps: false }],
           axes: [xAxis, axis({ label: "°C", labelSize: Math.round(px), labelFont: fontCss })],
         }, [xs, s.coolant_c], coolBox);
@@ -229,8 +229,10 @@ export async function render(main, params) {
     };
 
     build();
+    let lastPx = rootPx();
     ro = new ResizeObserver(() => {
       const w = width(), px = rootPx();
+      if (px !== lastPx) { lastPx = px; build(); return; } // cambia la base tipográfica: fuentes y alturas nuevas
       charts.forEach((u, i) => {
         const h = Math.round((i === 0 ? H_MAIN : H_COOL) * px);
         if (u.width !== w || u.height !== h) u.setSize({ width: w, height: h });
