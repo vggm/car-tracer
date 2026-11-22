@@ -10,7 +10,10 @@ import android.util.Log
 
 /** GPS_PROVIDER every 3 s. Needs ACCESS_FINE_LOCATION; without it no fixes are produced. */
 @SuppressLint("MissingPermission")
-class AndroidGpsSource(context: Context) : GpsSource {
+class AndroidGpsSource(
+    context: Context,
+    private val onProblem: (code: String, text: String) -> Unit = { _, _ -> },
+) : GpsSource {
     private val manager = context.applicationContext.getSystemService(LocationManager::class.java)
     private var listener: LocationListener? = null
 
@@ -22,8 +25,10 @@ class AndroidGpsSource(context: Context) : GpsSource {
             listener = l
         } catch (e: SecurityException) {
             Log.w(TAG, "ACCESS_FINE_LOCATION not granted, no GPS fixes", e)
+            onProblem("gps.permission_denied", "ACCESS_FINE_LOCATION not granted")
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "GPS provider unavailable", e)
+            onProblem("gps.provider_unavailable", "${e.javaClass.simpleName}: ${e.message ?: ""}".trim())
         }
     }
 

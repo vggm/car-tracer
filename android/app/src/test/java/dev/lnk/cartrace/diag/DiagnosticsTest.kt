@@ -65,4 +65,17 @@ class DiagnosticsTest {
         assertFalse(s.contains("abc123"))
         assertFalse(s.contains("xyz.789"))
     }
+
+    @Test
+    fun flushPendingBypassesDedup() = runBlocking {
+        val items = mutableListOf("app.crash" to "one", "app.crash" to "two")
+        val fake = object : PendingDiagStore {
+            override fun add(code: String, text: String) {}
+            override fun drain() = items.toList()
+        }
+        diag.flushPending(fake)
+        assertEquals(listOf("app.crash app.crash one", "app.crash app.crash two").size, out.size)
+        assertTrue(out[0].second.endsWith("one"))
+        assertTrue(out[1].second.endsWith("two"))
+    }
 }
