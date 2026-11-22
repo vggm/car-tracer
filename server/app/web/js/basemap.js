@@ -21,7 +21,7 @@ function loadLib() {
       const s = document.createElement("script");
       s.src = PM_LIB;
       s.onload = resolve;
-      s.onerror = () => { libPromise = null; reject(new Error("protomaps-leaflet")); };
+      s.onerror = () => { s.remove(); libPromise = null; reject(new Error("protomaps-leaflet")); };
       document.head.append(s);
     });
   }
@@ -34,7 +34,7 @@ const saveChoice = (v) => { try { localStorage.setItem(KEY, v); } catch { /* sin
 const osmLayer = () => L.tileLayer("/tiles/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap", className: "osm-tiles" });
 
 const pmLayer = () => protomapsL.leafletLayer({
-  url: PM_URL, flavor: isDark() ? "black" : "grayscale", lang: "es", attribution: PM_ATTR, maxZoom: 19,
+  url: PM_URL, flavor: isDark() ? "black" : "grayscale", lang: "es", attribution: PM_ATTR, maxZoom: 19, maxDataZoom: 14, // el extracto llega a z14
 });
 
 const NOOP = { destroy() {}, retheme() {} };
