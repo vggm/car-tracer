@@ -3,6 +3,7 @@ import { el, card, stat, emptyState, load } from "./ui.js";
 import { onThemeChange } from "./theme.js";
 import { addBasemap } from "./basemap.js";
 import { rangeStats } from "./selection.js";
+import { segVar, arrowsAlong } from "./segmap.js";
 import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 
 const nil = (x) => x === null || x === undefined;
@@ -114,14 +115,18 @@ export async function render(main, params, query) {
 
     // Selección de tramo: null = todo el viaje, i = índice del tramo.
     let sel = null;
-    let lines = [], highlight = null;
+    let lines = [], casings = [], badges = [], arrows = [], ends = [], highlight = null;
     let marker = null;
-    const segColor = (i) => cssVar(i % 2 ? "--accent-2" : "--accent");
-    // Pinta las polilíneas según la selección: los tramos no elegidos quedan atenuados.
+    // Pinta líneas, bordes, insignias y flechas según la selección: los tramos no elegidos quedan atenuados.
     const paintLines = () => {
       lines.forEach((ln, i) => {
-        if (sel === null || sel === i) ln.setStyle({ color: segColor(i), opacity: 0.95 });
+        const on = sel === null || sel === i;
+        if (on) ln.setStyle({ color: cssVar(segVar(i, segments.length)), opacity: 0.95 });
         else ln.setStyle({ color: cssVar("--muted"), opacity: 0.25 });
+        if (casings[i]) casings[i].setStyle({ color: cssVar("--bg"), opacity: on ? 0.85 : 0.2 });
+        if (badges[i]) badges[i].setOpacity(on ? 1 : 0.45);
+        if (ends[i]) ends[i].setStyle({ color: cssVar(segVar(i, segments.length)), fillColor: cssVar("--bg"), opacity: on ? 1 : 0.45, fillOpacity: on ? 1 : 0.45 });
+        (arrows[i] || []).forEach((a) => a.setOpacity(on ? 1 : 0.25));
       });
     };
     // Encuadra el mapa: sel (o todo) cuando no hay rango; si hay rango, los puntos dentro de {t0, t1}.
@@ -194,21 +199,61 @@ export async function render(main, params, query) {
         if (map === thisMap) basemap = b; else b.destroy();
       }).catch(console.error);
       const ll = pts.map((p) => [p[0], p[1]]);
-      lines = segments.map((sg, i) => L.polyline((sg.points || []).map((p) => [p[0], p[1]]), {
-        color: segColor(i), weight: 4, opacity: 0.95, className: "seg-line",
+      const segLL = (sg) => (sg.points || []).map((p) => [p[0], p[1]]);
+      // Borde bajo cada línea para que se lea sobre cualquier mapa base; se añade antes y queda debajo.
+      casings = segments.map((sg) => L.polyline(segLL(sg), {
+        color: cssVar("--bg"), weight: 7, opacity: 0.85, interactive: false,
       }).addTo(map));
-      const dot = (p, color) => L.circleMarker([p[0], p[1]], {
-        radius: 6, color: cssVar("--bg"), weight: 2, fillColor: color, fillOpacity: 1,
-      }).addTo(map);
-      const start = dot(pts[0], cssVar("--ok"));
-      const end = dot(pts[pts.length - 1], cssVar("--bad"));
-      const stopDots = stops.filter((st) => !nil(st.lat) && !nil(st.lon)).map((st) => {
-        const m = L.circleMarker([st.lat, st.lon], {
-          radius: 6, color: cssVar("--bg"), weight: 2, fillColor: cssVar("--warn"), fillOpacity: 1, className: "stop-dot",
+      lines = segments.map((sg, i) => L.polyline(segLL(sg), {
+        color: cssVar(segVar(i, segments.length)), weight: 4, opacity: 0.95, className: "seg-line",
+      }).addTo(map));
+      const single = segments.length === 1;
+      // Flechas de dirección (el giro va en un elemento interior: Leaflet usa transform en la raíz del icono).
+      arrows = segments.map((sg, i) => arrowsAlong(sg.points || []).map((a) => L.marker([a.lat, a.lon], {
+        icon: L.divIcon({
+          className: "seg-arrow", iconSize: [18, 18], iconAnchor: [9, 9],
+          html: `<div style="transform: rotate(${a.bearing}deg)"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="8" fill="var(${segVar(i, segments.length)})" stroke="var(--bg)" stroke-width="1.5"/><path d="M5 11.5 L9 5.5 L13 11.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`,
+        }),
+        interactive: false, keyboard: false, zIndexOffset: 100,
+      }).addTo(map)));
+      // Insignia de salida de cada tramo, en su primer punto (o en la parada anterior si no hay puntos).
+      badges = segments.map((sg, i) => {
+        const p0 = (sg.points || [])[0];
+        const prev = i >= 1 ? stops[i - 1] : null;
+        const at = p0 ? [p0[0], p0[1]] : (prev && !nil(prev.lat) && !nil(prev.lon) ? [prev.lat, prev.lon] : null);
+        if (!at) return null;
+        const v = segVar(i, segments.length);
+        const m = L.marker(at, {
+          icon: L.divIcon({
+            className: "seg-badge", iconSize: [24, 24], iconAnchor: [12, 12],
+            html: `<span style="background: var(${v})">${single ? "▶" : i + 1}</span>`,
+          }),
+          keyboard: false, zIndexOffset: 500,
         }).addTo(map);
-        m.bindTooltip(`Parada de ${dur(st.duration_ms)}`);
+        let tip = single ? `Salida ${hhmm(sg.start_ts)}` : `Tramo ${i + 1} · salida ${hhmm(sg.start_ts)}`;
+        if (i >= 1 && prev) tip += ` · parada de ${dur(prev.duration_ms)}`;
+        m.bindTooltip(tip);
         return m;
       });
+      // Fin de cada tramo salvo el último (ese lleva la bandera): anillo hueco en el color del tramo.
+      ends = segments.map((sg, i) => {
+        const pl = (sg.points || []).at(-1);
+        if (!pl || i === segments.length - 1) return null;
+        return L.circleMarker([pl[0], pl[1]], {
+          radius: 6, color: cssVar(segVar(i, segments.length)), weight: 3, fillColor: cssVar("--bg"), fillOpacity: 1,
+        }).addTo(map).bindTooltip(`Fin del tramo ${i + 1} · ${hhmm(pl[2])}`);
+      });
+      // Bandera de llegada en el último punto del viaje.
+      const last = pts[pts.length - 1];
+      const flag = `<svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true">`
+        + `<rect x="2" y="2" width="15" height="11" fill="#fff" stroke="#111" stroke-width="1.5"/>`
+        + `<path d="M2 2h5v3.67H2zM12 2h5v3.67h-5zM7 5.67h5v3.66H7zM2 9.33h5V13H2zM12 9.33h5V13h-5z" fill="#111"/>`
+        + `<path d="M2 1v24" stroke="#111" stroke-width="2.5" stroke-linecap="round"/>`
+        + `<path d="M2 1v24" stroke="#fff" stroke-width="1" stroke-linecap="round"/></svg>`;
+      L.marker([last[0], last[1]], {
+        icon: L.divIcon({ className: "seg-end", iconSize: [22, 26], iconAnchor: [2, 25], html: flag }),
+        keyboard: false, zIndexOffset: 1000,
+      }).addTo(map).bindTooltip(`Llegada ${hhmm(last[2])}`);
       marker = L.circleMarker(ll[0], {
         radius: 6, color: cssVar("--bg"), weight: 3, fillColor: cssVar("--accent"), fillOpacity: 1,
       });
@@ -216,9 +261,6 @@ export async function render(main, params, query) {
       recolor = () => {
         paintLines();
         if (highlight) highlight.setStyle({ color: cssVar("--accent") });
-        start.setStyle({ fillColor: cssVar("--ok"), color: cssVar("--bg") });
-        end.setStyle({ fillColor: cssVar("--bad"), color: cssVar("--bg") });
-        stopDots.forEach((m) => m.setStyle({ fillColor: cssVar("--warn"), color: cssVar("--bg") }));
         marker.setStyle({ fillColor: cssVar("--accent"), color: cssVar("--bg") });
       };
     }
@@ -259,7 +301,8 @@ export async function render(main, params, query) {
       history.replaceState(null, "", `#/viaje/${encodeURIComponent(id)}${i === null ? "" : `?tramo=${i + 1}`}`);
     };
     if (segments.length >= 2) {
-      const mk = (label, i) => el("button", { class: "chip", type: "button", "aria-pressed": "false", onclick: () => select(i) }, label);
+      const mk = (label, i) => el("button", { class: "chip", type: "button", "aria-pressed": "false", onclick: () => select(i) },
+        ...(i === null ? [] : [el("span", { class: "chip-sw", style: `background: var(${segVar(i, segments.length)})`, "aria-hidden": "true" })]), label);
       chipEls = [mk("Todo", null), ...segments.map((sg, i) =>
         mk(`Tramo ${i + 1} · ${hhmm(sg.start_ts)}–${hhmm(sg.end_ts)} · ${n1(sg.km)} km`, i))];
       main.append(el("div", { class: "seg-chips", role: "group", "aria-label": "Tramos del viaje" }, chipEls));
