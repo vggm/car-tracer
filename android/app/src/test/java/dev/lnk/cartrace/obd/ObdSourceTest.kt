@@ -1227,4 +1227,13 @@ class ObdSourceTest {
         assertTrue(traces().first().contains("result=fail"))
         job.cancel()
     }
+
+    @Test
+    fun protocol5InitWithGluedBusInitWithoutOkConnects() = runTest {
+        val src = prefSource("5") { ScriptedTransport(mutableListOf(), dpn = "0", on0100 = "BUS INIT:4100983B4011\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
 }
