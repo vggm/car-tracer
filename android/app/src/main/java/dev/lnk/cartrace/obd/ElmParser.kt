@@ -7,8 +7,8 @@ object ElmParser {
     )
     private val VOLTAGE = Regex("(\\d+(?:\\.\\d+)?)V")
 
-    /** "BUS INIT: ...OK" immediately followed by data on the same line (no CR between them). */
-    private val GLUED = Regex("^BUSINIT:?\\.*OK([0-9A-F]+)$")
+    /** "BUS INIT:" (dots and OK optional: real clones omit both) immediately followed by data on the same line. */
+    private val GLUED = Regex("^BUSINIT:?\\.*(?:OK)?([0-9A-F]+)$")
 
     private fun normalize(line: String): String =
         line.replace(">", "").filter { c -> !c.isWhitespace() }.uppercase()

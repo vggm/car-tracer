@@ -38,7 +38,13 @@ private class ScriptedTransport(
     val timeoutOn0100: String? = null,
     /** Real transport behaviour: a timeout closes the socket, so later commands fail until open() again. */
     val timeoutOnceOn: String? = null,
+    /** Answers to the first 0100 requests, in order (the probe first); later ones use [on0100]. */
+    seq0100: List<String> = emptyList(),
+    /** By default the probe 0100 (before any ATZ/ATE0) finds no live session, as on a fresh adapter. */
+    val deadProbe: Boolean = true,
 ) : ElmTransport {
+    private var setupSeen = false
+    private val seq0100 = seq0100.toMutableList()
     private var dead = false
     private var timedOut = false
     var closed = false
@@ -63,12 +69,13 @@ private class ScriptedTransport(
         if (failOn03 && cmd == "03") throw IOException("link lost mid-scan")
         if (failOn04 && cmd == "04") throw IOException("link lost mid-clear")
         log += cmd
+        if (cmd == "ATZ" || cmd == "ATE0") setupSeen = true
         timeouts.putIfAbsent(cmd, timeoutMs)
         if (cmd.startsWith("ATSP")) lastSp = cmd
         return when (cmd) {
             "ATZ" -> atzFirst?.also { atzFirst = null } ?: "ELM327 v1.5\r\r>"
             "ATDPN" -> "$dpn\r\r>"
-            "0100" -> if (timeoutOn0100 != null) throw IOException(timeoutOn0100) else if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
+            "0100" -> if (seq0100.isNotEmpty()) seq0100.removeAt(0) else if (deadProbe && !setupSeen) "BUS INIT:UNABLE TO CONNECT\r>" else if (timeoutOn0100 != null) throw IOException(timeoutOn0100) else if (lastSp == failOnSp || lastSp in failSps) "UNABLE TO CONNECT\r\r>" else on0100
             "0120" -> MASK_0120
             "0140" -> MASK_0140
             "03" -> answer03 ?: "43 01 33 00 00 00 00\r\r>"
@@ -1225,6 +1232,104 @@ class ObdSourceTest {
         advanceTimeBy(100)
         assertTrue(attempts().first().contains("5: BUS INIT ERROR"))
         assertTrue(traces().first().contains("result=fail"))
+        job.cancel()
+    }
+
+    @Test
+    fun protocol5InitWithGluedBusInitWithoutOkConnects() = runTest {
+        val src = prefSource("5") { ScriptedTransport(mutableListOf(), dpn = "0", on0100 = "BUS INIT:4100983B4011\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        job.cancel()
+    }
+
+    // ---- reuse of the live session found by the probe ----
+
+    private val RESETS = setOf("ATZ", "ATWS", "ATFI")
+    private fun hasReset(log: List<String>) = log.any { it in RESETS || it.startsWith("ATSP") }
+
+    @Test
+    fun liveSessionIsAdoptedWithoutResetting() = runTest {
+        val log = mutableListOf<String>()
+        val src = source { ScriptedTransport(log, dpn = "A5", deadProbe = false, on0100 = "4100983B4011\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertFalse(log.toString(), hasReset(log))
+        val probe0100 = log.indexOf("0100")
+        assertEquals(listOf("ATE0", "ATL0", "ATS0", "ATH0", "0100"), log.subList(probe0100 + 1, probe0100 + 6))
+        assertTrue(events().single().detail!!.contains(" live "))
+        assertTrue(traces().first().contains("reusing live session"))
+        job.cancel()
+    }
+
+    @Test
+    fun liveSessionWithHeadersIsAdoptedAfterAth0() = runTest {
+        val log = mutableListOf<String>()
+        val src = source {
+            ScriptedTransport(log, dpn = "A5", deadProbe = false, seq0100 = listOf("86F1104100983B4011EC\r\n\r\n>"), on0100 = "4100983B4011\r\r>")
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertFalse(log.toString(), hasReset(log))
+        job.cancel()
+    }
+
+    @Test
+    fun deadProbeGoesThroughNormalInit() = runTest {
+        val log = mutableListOf<String>()
+        val src = source { ScriptedTransport(log, dpn = "A5", deadProbe = false, seq0100 = listOf("BUS INIT:UNABLE TO CONNECT\r>")) }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.contains("ATZ"))
+        assertFalse(events().single().detail!!.contains(" live "))
+        job.cancel()
+    }
+
+    @Test
+    fun failedAdoptionFallsBackToNormalInit() = runTest {
+        val log = mutableListOf<String>()
+        val src = source {
+            ScriptedTransport(log, dpn = "A5", deadProbe = false, seq0100 = listOf("4100983B4011\r\r>", "BUS INIT:UNABLE TO CONNECT\r>"))
+        }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertTrue(log.contains("ATZ"))
+        job.cancel()
+    }
+
+    @Test
+    fun failedAdoptionIsReportedInAttemptDetail() = runTest {
+        val src = source { ScriptedTransport(mutableListOf(), dpn = "A5", deadProbe = false, seq0100 = listOf("4100983B4011\r\r>"), on0100 = "BUS INIT:UNABLE TO CONNECT\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(events().first { it.event == Events.OBD_ATTEMPT_FAILED }.detail!!.contains("live: UNABLE TO CONNECT"))
+        job.cancel()
+    }
+
+    @Test
+    fun manualPreferenceDifferentFromLiveProtocolDoesNotAdopt() = runTest {
+        val log = mutableListOf<String>()
+        val src = prefSource("4") { ScriptedTransport(log, dpn = "A5", deadProbe = false, on0100 = "4100983B4011\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(log.contains("ATZ"))
+        assertTrue(log.contains("ATSP4"))
+        job.cancel()
+    }
+
+    @Test
+    fun manualPreferenceEqualToLiveProtocolAdopts() = runTest {
+        val log = mutableListOf<String>()
+        val src = prefSource("5") { ScriptedTransport(log, dpn = "A5", deadProbe = false, on0100 = "4100983B4011\r\r>") }
+        val job = launch { src.run() }
+        advanceTimeBy(100)
+        assertTrue(src.state.value is ObdState.Connected)
+        assertFalse(log.toString(), hasReset(log))
         job.cancel()
     }
 }

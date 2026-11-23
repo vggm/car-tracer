@@ -118,4 +118,33 @@ class ElmParserTest {
         assertTrue(ElmParser.hasGluedData(raw))
         assertFalse(ElmParser.isError(raw))
     }
+
+    @Test fun gluedDataWithoutOkIsKeptRealTrace() {
+        val raw = "BUS INIT:4100983B4011\r\r>"
+        assertEquals(listOf("4100983B4011"), ElmParser.clean(raw))
+        assertTrue(ElmParser.supportedPids(listOf(raw)).isNotEmpty())
+        assertTrue(ElmParser.hasGluedData(raw))
+        assertFalse(ElmParser.isError(raw))
+    }
+
+    @Test fun busInitWithHeadersGluedIsKept() {
+        val raw = "BUS INIT:86F1104100983B4011EC\r\n\r\n>"
+        assertEquals(listOf("86F1104100983B4011EC"), ElmParser.clean(raw))
+        assertFalse(ElmParser.isError(raw))
+    }
+
+    @Test fun busInitErrorsAndBareOkAreNotData() {
+        for (raw in listOf(
+            "BUS INIT:UNABLE TO CONNECT\r>",
+            "BUS INIT: ...ERROR\r>",
+            "BUS INIT: OK\r>",
+            "BUS INIT: ...OK\r>",
+        )) {
+            assertEquals(raw, emptyList<String>(), ElmParser.clean(raw))
+            assertFalse(raw, ElmParser.hasGluedData(raw))
+        }
+        assertTrue(ElmParser.isError("BUS INIT:UNABLE TO CONNECT\r>"))
+        assertTrue(ElmParser.isError("BUS INIT: ...ERROR\r>"))
+        assertFalse(ElmParser.isError("BUS INIT: OK\r>"))
+    }
 }

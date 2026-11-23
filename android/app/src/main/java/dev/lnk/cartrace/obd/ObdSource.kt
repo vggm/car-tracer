@@ -172,7 +172,8 @@ class ObdSource(
                 _state.value = ObdState.Connecting
                 rec.open()
                 opened = true
-                if (!probe(rec)) {
+                val probed = probe(rec)
+                if (!probed.ok) {
                     // A timed-out probe command leaves the real socket closed: start over on a fresh one.
                     opened = false
                     rec.close()
@@ -180,12 +181,23 @@ class ObdSource(
                     rec.open()
                     opened = true
                 }
-                val protocol = initializeWithStoredProtocol(rec, parts)
+                var live = false
+                var adopted: String? = null
+                val liveProtocol = probed.liveProtocol
+                if (liveProtocol != null && (protocolPreference == "0" || protocolPreference == liveProtocol)) {
+                    try {
+                        adopted = adoptLiveSession(rec)
+                        live = true
+                    } catch (e: InitFailure) {
+                        parts += "live: ${e.message}" + (e.raw?.let { " [$it]" } ?: "")
+                    }
+                }
+                val protocol = adopted ?: initializeWithStoredProtocol(rec, parts)
                 connected = true
                 backoffIdx = 0
                 unableCount = 0
                 _state.value = ObdState.Connected(protocol)
-                send(Events.OBD_CONNECTED, withVariant("$protocol n=$attempt t=${(nowMs() - startMs) / 1000}s"))
+                send(Events.OBD_CONNECTED, withVariant("$protocol${if (live) " live" else ""} n=$attempt t=${(nowMs() - startMs) / 1000}s"))
                 sendTrace(rec, ok = true)
                 attempt = 0
                 readDtcs(transport)
@@ -268,11 +280,14 @@ class ObdSource(
         send(Events.OBD_TRACE, header + text.substring(nl), MAX_TRACE_DETAIL)
     }
 
+    /** [ok] false: a probe command failed (socket maybe dead). [liveProtocol]: number of a live ECU session the probe 0100 found. */
+    private class ProbeResult(val ok: Boolean, val liveProtocol: String? = null)
+
     /**
-     * Read-only look at the adapter before ATZ wipes its state. Returns false when a command failed:
+     * Read-only look at the adapter before ATZ wipes its state. [ProbeResult.ok] is false when a command failed:
      * the probe stops (the socket may be dead) and the caller reopens it.
      */
-    private suspend fun probe(t: TraceRecorder): Boolean {
+    private suspend fun probe(t: TraceRecorder): ProbeResult {
         suspend fun cmd(c: String, timeoutMs: Long): String =
             t.command(c, timeoutMs)
         try {
@@ -285,14 +300,29 @@ class ObdSource(
             if (probeOnce.compareAndSet(false, true)) cmd("ATPPS", PROBE_TIMEOUT)
             // A determined protocol (anything but 0 / A0) may mean a live ECU session left by another app.
             val p = dpn.removePrefix("A")
-            if (dpn.isNotEmpty() && p != "0" && PROTOCOL_NUMBER.matches(p)) cmd("0100", PROBE_0100_TIMEOUT)
-            return true
+            if (dpn.isNotEmpty() && p != "0" && PROTOCOL_NUMBER.matches(p)) {
+                val raw = cmd("0100", PROBE_0100_TIMEOUT)
+                // Loose gate: headers (86F110...EC) may surround the 41 00 answer.
+                val live = !ElmParser.isError(raw) && ElmParser.clean(raw).any { it.contains("4100") }
+                return ProbeResult(true, if (live) p else null)
+            }
+            return ProbeResult(true)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             t.note("probe failed: ${e.message ?: e.javaClass.simpleName}; reopening")
-            return false
+            return ProbeResult(false)
         }
+    }
+
+    /**
+     * The probe 0100 found a live ECU session: keep it. Only adapter formatting commands that do not reset the bus
+     * (no ATZ/ATWS/ATSP/ATFI), then the normal supported-PIDs read. Throws [InitFailure] if the session is not usable.
+     */
+    private suspend fun adoptLiveSession(t: TraceRecorder): String {
+        t.note("reusing live session")
+        for (c in listOf("ATE0", "ATL0", "ATS0", "ATH0")) t.command(c)
+        return readSupportedPids(t)
     }
 
     /**
@@ -336,6 +366,11 @@ class ObdSource(
             if (protocolNumber in K_LINE) setup += "ATKW0"
             for (c in setup) t.command(c)
         }
+        return readSupportedPids(t)
+    }
+
+    /** 0100 -> 0120 -> 0140 with strict validation, then ATDPN + store. Returns the ATDPN answer. */
+    private suspend fun readSupportedPids(t: ElmTransport): String {
         supported = emptySet()
         var next: String? = "0100"
         val found = linkedSetOf<String>()
