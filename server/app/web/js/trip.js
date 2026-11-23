@@ -3,7 +3,7 @@ import { el, card, stat, emptyState, load } from "./ui.js";
 import { onThemeChange } from "./theme.js";
 import { addBasemap } from "./basemap.js";
 import { rangeStats } from "./selection.js";
-import { segVar, arrowsAlong } from "./segmap.js";
+import { segVar, arrowsAlong, LANE_PX, offsetPath, shiftPx, endBearings } from "./segmap.js";
 import { dayLong, hhmm, dur, n0, n1, monthOf, TZ } from "./fmt.js";
 
 const nil = (x) => x === null || x === undefined;
@@ -209,7 +209,8 @@ export async function render(main, params, query) {
       }).addTo(map));
       const single = segments.length === 1;
       // Flechas de dirección (el giro va en un elemento interior: Leaflet usa transform en la raíz del icono).
-      arrows = segments.map((sg, i) => arrowsAlong(sg.points || []).map((a) => L.marker([a.lat, a.lon], {
+      const arrowPos = segments.map((sg) => arrowsAlong(sg.points || [])); // {lat, lon, bearing} por tramo, para relayout
+      arrows = segments.map((sg, i) => arrowPos[i].map((a) => L.marker([a.lat, a.lon], {
         icon: L.divIcon({
           className: "seg-arrow", iconSize: [18, 18], iconAnchor: [9, 9],
           html: `<div style="transform: rotate(${a.bearing}deg)"><svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="8" fill="var(${segVar(i, segments.length)})" stroke="var(--bg)" stroke-width="1.5"/><path d="M5 11.5 L9 5.5 L13 11.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`,
@@ -217,11 +218,15 @@ export async function render(main, params, query) {
         interactive: false, keyboard: false, zIndexOffset: 100,
       }).addTo(map)));
       // Insignia de salida de cada tramo, en su primer punto (o en la parada anterior si no hay puntos).
+      const bearings = segments.map((sg) => endBearings(sg.points || []));
+      // Posición base (sin desplazar) y rumbo de cada insignia/anillo, para relayout.
+      const badgeAt = [], endAt = [];
       badges = segments.map((sg, i) => {
         const p0 = (sg.points || [])[0];
         const prev = i >= 1 ? stops[i - 1] : null;
         const at = p0 ? [p0[0], p0[1]] : (prev && !nil(prev.lat) && !nil(prev.lon) ? [prev.lat, prev.lon] : null);
         if (!at) return null;
+        badgeAt[i] = { at, bearing: p0 ? bearings[i].first : null };
         const v = segVar(i, segments.length);
         const m = L.marker(at, {
           icon: L.divIcon({
@@ -239,6 +244,7 @@ export async function render(main, params, query) {
       ends = segments.map((sg, i) => {
         const pl = (sg.points || []).at(-1);
         if (!pl || i === segments.length - 1) return null;
+        endAt[i] = { at: [pl[0], pl[1]], bearing: bearings[i].last };
         return L.circleMarker([pl[0], pl[1]], {
           radius: 6, color: cssVar(segVar(i, segments.length)), weight: 3, fillColor: cssVar("--bg"), fillOpacity: 1,
         }).addTo(map).bindTooltip(`Fin del tramo ${i + 1} · ${hhmm(pl[2])}`);
@@ -250,7 +256,7 @@ export async function render(main, params, query) {
         + `<path d="M2 2h5v3.67H2zM12 2h5v3.67h-5zM7 5.67h5v3.66H7zM2 9.33h5V13H2zM12 9.33h5V13h-5z" fill="#111"/>`
         + `<path d="M2 1v24" stroke="#111" stroke-width="2.5" stroke-linecap="round"/>`
         + `<path d="M2 1v24" stroke="#fff" stroke-width="1" stroke-linecap="round"/></svg>`;
-      L.marker([last[0], last[1]], {
+      const flagMarker = L.marker([last[0], last[1]], {
         icon: L.divIcon({ className: "seg-end", iconSize: [22, 26], iconAnchor: [2, 25], html: flag }),
         keyboard: false, zIndexOffset: 1000,
       }).addTo(map).bindTooltip(`Llegada ${hhmm(last[2])}`);
@@ -258,6 +264,40 @@ export async function render(main, params, query) {
         radius: 6, color: cssVar("--bg"), weight: 3, fillColor: cssVar("--accent"), fillOpacity: 1,
       });
       fitTo(ll);
+      // Cada línea va desplazada LANE_PX píxeles a la derecha de su sentido de marcha; se recalcula al cambiar el zoom.
+      const flagBearing = bearings[segments.length - 1].last;
+      const relayout = () => {
+        if (!map) return;
+        const z = map.getZoom();
+        const proj = (lat, lon) => map.project(L.latLng(lat, lon), z);
+        const unproj = (p) => map.unproject(L.point(p.x, p.y), z);
+        const shifted = (lat, lon, bearing) => {
+          const p = proj(lat, lon);
+          return bearing === null || bearing === undefined ? p : shiftPx(p, bearing, LANE_PX);
+        };
+        segments.forEach((sg, i) => {
+          const sp = sg.points || [];
+          if (sp.length >= 2) {
+            // Simplifica a 1 px antes de desplazar para que el ruido del GPS no genere picos.
+            const simp = L.LineUtil.simplify(sp.map((q) => proj(q[0], q[1])), 1);
+            const latlngs = offsetPath(simp, LANE_PX).map(unproj);
+            casings[i].setLatLngs(latlngs);
+            lines[i].setLatLngs(latlngs);
+          }
+          arrowPos[i].forEach((a, k) => arrows[i][k].setLatLng(unproj(shifted(a.lat, a.lon, a.bearing))));
+          if (badges[i]) badges[i].setLatLng(unproj(shifted(badgeAt[i].at[0], badgeAt[i].at[1], badgeAt[i].bearing)));
+          if (ends[i]) ends[i].setLatLng(unproj(shifted(endAt[i].at[0], endAt[i].at[1], endAt[i].bearing)));
+        });
+        // Bandera: si cae encima de la insignia de salida, se aparta a su derecha (la base del mástil queda en el borde).
+        let fp = shifted(last[0], last[1], flagBearing);
+        if (badgeAt[0]) {
+          const bp = shifted(badgeAt[0].at[0], badgeAt[0].at[1], badgeAt[0].bearing);
+          if (Math.hypot(fp.x - bp.x, fp.y - bp.y) < 20) fp = { x: bp.x + 13, y: bp.y };
+        }
+        flagMarker.setLatLng(unproj(fp));
+      };
+      relayout();
+      map.on("zoomend", relayout); // el listener muere con map.remove() en cleanup
       recolor = () => {
         paintLines();
         if (highlight) highlight.setStyle({ color: cssVar("--accent") });
