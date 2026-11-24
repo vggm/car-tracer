@@ -71,7 +71,7 @@ def main() -> int:
             ("donde", "Dónde está el coche"),
             ("trayectos", "Últimos trayectos"),
             ("estado", "Motor y batería"),
-            ("averias", "Averías guardadas"),
+            ("averias", "Averías confirmadas y en observación"),
             ("escanear", "Leer averías ahora"),
             ("borrar_averias", "Borrar averías de la centralita"),
         ])
