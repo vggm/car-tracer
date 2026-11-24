@@ -82,7 +82,8 @@ android {
         }
         release {
             isMinifyEnabled = false
-            buildConfigField("String", "PANEL_URL", "\"${panelUrlFor(true)}\"")
+            // Empty here so other modules still configure; the release network config task fails instead.
+            buildConfigField("String", "PANEL_URL", "\"${panelUrlProp ?: ""}\"")
             signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
