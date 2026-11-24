@@ -43,6 +43,19 @@ class _OptionalDirStaticFiles(StaticFiles):
         return None
 
 
+# The web app has no build step or hashed filenames, and the Android WebView's
+# heuristic caching kept serving old ES modules for hours after a deploy.
+# no-cache = the client may store it but must revalidate (ETag -> 304) every time.
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(
     settings: Settings,
     clock: Callable[[], int] = now_ms,
@@ -68,11 +81,11 @@ def create_app(
     map_dir = Path(os.environ.get("CAR_TRACE_MAP_DIR")
                    or Path(settings.db_path).parent / "maps")
     app.mount("/maps", _OptionalDirStaticFiles(directory=map_dir, check_dir=False), name="maps")
-    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    app.mount("/static", _NoCacheStaticFiles(directory=WEB_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(WEB_DIR / "index.html")
+        return FileResponse(WEB_DIR / "index.html", headers=_NO_CACHE)
 
     @app.get("/healthz")
     async def healthz():
