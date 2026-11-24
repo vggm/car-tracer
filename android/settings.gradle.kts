@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "car-trace"
 include(":app")
+include(":panel")

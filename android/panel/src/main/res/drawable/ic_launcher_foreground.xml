@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- route trail, from the start dot to the current position -->
+    <path
+        android:pathData="M36,73 C44,73 44,61 52,60 C59,59 60,62 62,56 L63.5,52"
+        android:strokeColor="#3C7DB0"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#3C7DB0"
+        android:pathData="M36,73 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
+    <!-- current position: ring and dot -->
+    <path
+        android:pathData="M66,42 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0"
+        android:strokeColor="#5CB8FF"
+        android:strokeWidth="3.5" />
+    <path
+        android:fillColor="#5CB8FF"
+        android:pathData="M66,42 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+</vector>
