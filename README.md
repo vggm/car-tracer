@@ -39,6 +39,7 @@ Tablet Junsun (Android)                       Servidor de casa (Podman)
 | Ruta | Contenido |
 | --- | --- |
 | `android/` | App Android en Kotlin con Jetpack Compose, Room, OkHttp y coroutines. minSdk 33, targetSdk 34 |
+| `android/panel/` | App «Car Trace» para el móvil: abre el panel web a pantalla completa en un WebView |
 | `server/` | API de ingesta, panel web (API JSON en `app/panel/`, web estática en `app/web/`) y bot de Telegram en Python 3.12 (FastAPI, pydantic, httpx), gestionado con uv |
 | `docker-compose.yml` | Despliegue de los dos contenedores (`car-trace-api` y `car-trace-bot`) |
 | `tools/simulate_drive.py` | Simula un trayecto y lo envía al servidor (solo stdlib) |
@@ -115,6 +116,17 @@ CAR_TRACE_INGEST_TOKEN=demo CAR_TRACE_DB=/tmp/demo.db CAR_TRACE_TZ=Europe/Madrid
 ```
 
 El panel queda en `http://localhost:8000/`. Para ver el mapa vectorial en local añade `CAR_TRACE_MAP_DIR=<dir con spain.pmtiles>`; sin él solo se usa OSM.
+
+### App del panel para el móvil
+
+GrapheneOS no instala la web como app, así que `android/panel` es un envoltorio mínimo: un WebView a pantalla completa con el panel. Los enlaces a otros sitios se abren en el navegador. Sin conexión con el panel muestra un aviso con «Reintentar». Los cambios en la web llegan sin recompilar el APK.
+
+La URL del panel no va en git: se pone en `android/local.properties` (`panel.url=http://<host-tailscale>:8090/`) y es el único host al que la app permite HTTP sin TLS. Para construir el APK firmado:
+
+```bash
+cd android
+./gradlew :panel:assembleRelease
+```
 
 ## Documentación
 
