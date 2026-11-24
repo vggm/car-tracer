@@ -3,7 +3,7 @@ import json
 import sqlite3
 
 from app import fmt
-from app.dtc import latest_dtc
+from app.dtc import group_codes, latest_dtc
 from app.location import ENGINE_ON_VOLTAGE
 
 MAX_OBD_SCAN = 2000
@@ -45,11 +45,15 @@ def format_estado(conn: sqlite3.Connection, now_ms: int, tz: str) -> str:
         lines.append(f"⚙️ Revoluciones: {fmt.num(engine[1]['rpm'])} rpm")
     dtc = latest_dtc(conn)
     if dtc is not None:
-        n = len(dict.fromkeys([*dtc[1], *dtc[2]]))
-        if n == 0:
-            lines.append("✅ Sin averías guardadas")
-        elif n == 1:
-            lines.append("⚠️ 1 avería guardada · /averias")
+        confirmed, watching = group_codes(dtc[1], dtc[2])
+        parts = []
+        if confirmed:
+            n = len(confirmed)
+            parts.append(f"{n} confirmada" if n == 1 else f"{n} confirmadas")
+        if watching:
+            parts.append(f"{len(watching)} en observación")
+        if parts:
+            lines.append(f"⚠️ Averías: {', '.join(parts)} · /averias")
         else:
-            lines.append(f"⚠️ {n} averías guardadas · /averias")
+            lines.append("✅ Sin averías")
     return "\n".join(lines)

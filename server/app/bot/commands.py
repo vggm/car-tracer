@@ -21,7 +21,7 @@ START_TEXT = (
     "/donde · dónde está el coche\n"
     "/trayectos · últimos trayectos\n"
     "/estado · motor y batería\n"
-    "/averias · averías guardadas\n"
+    "/averias · averías confirmadas y en observación\n"
     "/escanear · leer averías ahora\n"
     "/borrar_averias · borrar averías de la centralita"
 )

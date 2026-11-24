@@ -1,6 +1,6 @@
 import json
 
-from app import db, dtc
+from app import db, dtc, fmt
 
 TZ = "Europe/Madrid"
 NOW = 1_795_000_000_000  # fixed instant
@@ -49,56 +49,69 @@ def test_latest_dtc(tmp_path):
     assert dtc.latest_dtc(c) == (2000, ["P0401", "P1351"], ["P0401"])
 
 
+def test_group_codes():
+    assert dtc.group_codes(["P0401", "P0409"], ["P0401", "P1351"]) == (
+        [("P0401", True), ("P0409", False)], ["P1351"])
+    assert dtc.group_codes([], ["P1", "P2", "P1"]) == ([], ["P1", "P2"])
+    assert dtc.group_codes(["P1", "P1", "P2"], []) == ([("P1", False), ("P2", False)], [])
+
+
+def test_format_codes_suffix():
+    assert dtc.format_codes(["P0401"], suffix=" · sigue fallando") == [
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR) · sigue fallando"
+    ]
+
+
 def test_averias_never_read(tmp_path):
     assert dtc.format_averias(_conn(tmp_path), NOW, TZ) == "Todavía no se han leído las averías."
 
 
-def test_averias_example_same_pending(tmp_path):
+def test_averias_example(tmp_path):
     c = _conn(tmp_path)
-    add_dtc(c, NOW - 60_000, ["P0401", "P1351"], ["P0401", "P1351"])
-    from app import fmt
+    add_dtc(c, NOW - 60_000, ["P0401", "P1162", "P0490", "P0409"],
+            ["P0401", "P1162", "P0490", "P0409", "P1351"])
     when = fmt.when(NOW - 60_000, NOW, TZ)
     assert dtc.format_averias(c, NOW, TZ) == (
-        f"⚠️ Averías guardadas · leídas {when}\n"
-        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)\n"
-        "• P1351 · Relé de los calentadores (código de Peugeot)\n"
-        "Pendientes: las mismas."
+        f"⚠️ Averías · leídas {when}\n"
+        "\n"
+        "🔴 Confirmadas (4)\n"
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR) · sigue fallando\n"
+        "• P1162 · Código de Peugeot sin descripción en el catálogo · sigue fallando\n"
+        "• P0490 · Circuito de control de la EGR: señal alta · sigue fallando\n"
+        "• P0409 · Circuito del sensor de la EGR · sigue fallando\n"
+        "\n"
+        "🟡 En observación (1)\n"
+        "• P1351 · Relé de los calentadores (código de Peugeot)"
     )
 
 
 def test_averias_empty(tmp_path):
     c = _conn(tmp_path)
     add_dtc(c, NOW - 60_000, [], [])
-    from app import fmt
     assert dtc.format_averias(c, NOW, TZ) == (
-        f"✅ Sin averías guardadas · leídas {fmt.when(NOW - 60_000, NOW, TZ)}"
+        f"✅ Sin averías · leídas {fmt.when(NOW - 60_000, NOW, TZ)}"
     )
 
 
-def test_averias_pending_different(tmp_path):
-    c = _conn(tmp_path)
-    add_dtc(c, NOW - 60_000, ["P0401"], ["P0409"])
-    from app import fmt
-    assert dtc.format_averias(c, NOW, TZ) == (
-        f"⚠️ Averías guardadas · leídas {fmt.when(NOW - 60_000, NOW, TZ)}\n"
-        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)\n"
-        "Pendientes:\n"
-        "• P0409 · Circuito del sensor de la EGR"
-    )
-
-
-def test_averias_pending_only(tmp_path):
-    c = _conn(tmp_path)
-    add_dtc(c, NOW - 60_000, [], ["P0409"])
-    from app import fmt
-    assert dtc.format_averias(c, NOW, TZ) == (
-        f"⚠️ Averías guardadas · leídas {fmt.when(NOW - 60_000, NOW, TZ)}\n"
-        "Pendientes:\n"
-        "• P0409 · Circuito del sensor de la EGR"
-    )
-
-
-def test_averias_no_pending_line_omitted(tmp_path):
+def test_averias_confirmed_only_not_recurring(tmp_path):
     c = _conn(tmp_path)
     add_dtc(c, NOW - 60_000, ["P0401"], [])
-    assert "Pendientes" not in dtc.format_averias(c, NOW, TZ)
+    assert dtc.format_averias(c, NOW, TZ) == (
+        f"⚠️ Averías · leídas {fmt.when(NOW - 60_000, NOW, TZ)}\n"
+        "\n"
+        "🔴 Confirmadas (1)\n"
+        "• P0401 · Flujo insuficiente de recirculación de gases (EGR)"
+    )
+
+
+def test_averias_watching_only(tmp_path):
+    c = _conn(tmp_path)
+    add_dtc(c, NOW - 60_000, [], ["P0420"])
+    out = dtc.format_averias(c, NOW, TZ)
+    assert out == (
+        f"⚠️ Averías · leídas {fmt.when(NOW - 60_000, NOW, TZ)}\n"
+        "\n"
+        "🟡 En observación (1)\n"
+        "• P0420 · Eficiencia del catalizador por debajo del umbral (banco 1)"
+    )
+    assert "Confirmadas" not in out

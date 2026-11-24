@@ -85,9 +85,23 @@ def latest_dtc(conn: sqlite3.Connection) -> tuple[int, list[str], list[str]] | N
     return row[0], list(d.get("active") or []), list(d.get("pending") or [])
 
 
-def format_codes(codes: list[str], mark_new: set[str] = frozenset()) -> list[str]:
+def group_codes(
+    active: list[str], pending: list[str]
+) -> tuple[list[tuple[str, bool]], list[str]]:
+    """Split into (confirmed as (code, recurring), watching). Deduped, order kept."""
+    act = list(dict.fromkeys(active))
+    pend = list(dict.fromkeys(pending))
+    pend_set, act_set = set(pend), set(act)
+    confirmed = [(c, c in pend_set) for c in act]
+    watching = [c for c in pend if c not in act_set]
+    return confirmed, watching
+
+
+def format_codes(
+    codes: list[str], mark_new: set[str] = frozenset(), suffix: str = ""
+) -> list[str]:
     return [
-        f"• {'🆕 ' if c in mark_new else ''}{c} · {describe(c)}" for c in codes
+        f"• {'🆕 ' if c in mark_new else ''}{c} · {describe(c)}{suffix}" for c in codes
     ]
 
 
@@ -96,15 +110,15 @@ def format_averias(conn: sqlite3.Connection, now_ms: int, tz: str) -> str:
     if latest is None:
         return "Todavía no se han leído las averías."
     ts, active, pending = latest
-    read = f"leídas {fmt.when(ts, now_ms, tz)}"
-    if not active and not pending:
-        lines = [f"✅ Sin averías guardadas · {read}"]
-    else:
-        lines = [f"⚠️ Averías guardadas · {read}", *format_codes(active)]
-    if pending:
-        if active and set(pending) == set(active):
-            lines.append("Pendientes: las mismas.")
-        else:
-            lines.append("Pendientes:")
-            lines.extend(format_codes(pending))
+    when = fmt.when(ts, now_ms, tz)
+    confirmed, watching = group_codes(active, pending)
+    if not confirmed and not watching:
+        return f"✅ Sin averías · leídas {when}"
+    lines = [f"⚠️ Averías · leídas {when}"]
+    if confirmed:
+        lines += ["", f"🔴 Confirmadas ({len(confirmed)})"]
+        for code, recurring in confirmed:
+            lines += format_codes([code], suffix=" · sigue fallando" if recurring else "")
+    if watching:
+        lines += ["", f"🟡 En observación ({len(watching)})", *format_codes(watching)]
     return "\n".join(lines)

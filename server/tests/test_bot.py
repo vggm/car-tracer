@@ -14,7 +14,7 @@ from app.db import connect
 CHAT = 42
 START_TEXT_EXPECTED = (
     "Comandos:\n/donde · dónde está el coche\n/trayectos · últimos trayectos\n"
-    "/estado · motor y batería\n/averias · averías guardadas\n"
+    "/estado · motor y batería\n/averias · averías confirmadas y en observación\n"
     "/escanear · leer averías ahora\n"
     "/borrar_averias · borrar averías de la centralita")
 NOW = 1_700_000_000_000
@@ -669,6 +669,11 @@ def test_borrar_other_chat_ignored(conn):
 def test_set_my_commands_includes_borrar():
     import inspect
     assert '("borrar_averias", "Borrar averías de la centralita")' in inspect.getsource(botmain.main)
+
+
+def test_set_my_commands_averias_label():
+    import inspect
+    assert '("averias", "Averías confirmadas y en observación")' in inspect.getsource(botmain.main)
 
 
 def test_send_photo_is_multipart():
