@@ -75,6 +75,22 @@ def test_index_and_static_served(client):
     assert client.get("/static/index.html").status_code == 200
 
 
+def test_index_revalidates_every_time(client):
+    assert client.get("/").headers["cache-control"] == "no-cache"
+
+
+def test_static_revalidates_every_time(client):
+    r = client.get("/static/js/dtc.js")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+
+
+def test_static_conditional_get_still_304(client):
+    etag = client.get("/static/js/dtc.js").headers["etag"]
+    r = client.get("/static/js/dtc.js", headers={"If-None-Match": etag})
+    assert r.status_code == 304
+
+
 from urllib.parse import quote
 
 
