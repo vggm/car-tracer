@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light system theme: the WebView reports prefers-color-scheme: light. -->
+    <color name="panel_bg">#F6F5F2</color>
+    <color name="icon_bg">#111315</color>
+    <style name="Theme.Panel" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/panel_bg</item>
+        <item name="android:statusBarColor">@color/panel_bg</item>
+        <item name="android:navigationBarColor">@color/panel_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
