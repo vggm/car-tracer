@@ -500,7 +500,9 @@ a.mp-btn:hover { background: var(--surface-2); }
 /* === Task 10: dtc and alerts === */
 .dot.ok { background: var(--ok); }
 .dtc-head { display: flex; align-items: center; gap: 0.667rem; font-size: 1.12rem; }
-.dtc-sub { margin-top: 1.2rem; }
+.dtc-group + .dtc-group { margin-top: 1.2rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+.dtc-explain { margin: 0.4rem 0 0; color: var(--muted); font-size: .933rem; }
+.dtc-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.267rem 0.667rem; }
 .dtc-list { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; gap: 0.8rem; }
 .dtc-code { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; font-size: 1.173rem; letter-spacing: .04em; }
 .dtc-desc { display: block; color: var(--muted); font-size: .96rem; margin-top: 0.133rem; }
