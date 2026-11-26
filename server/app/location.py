@@ -114,6 +114,19 @@ def _engine_on(conn: sqlite3.Connection, last_ts: int) -> bool | None:
     return None
 
 
+def latest_rpm(conn: sqlite3.Connection, last_ts: int) -> int | None:
+    """Most recent OBD rpm within OBD_WINDOW_MS before last_ts, rounded; None if absent."""
+    for (data,) in conn.execute(
+        "SELECT data FROM records WHERE type='obd' AND ts BETWEEN ? AND ?"
+        " ORDER BY ts DESC",
+        (last_ts - OBD_WINDOW_MS, last_ts),
+    ):
+        v = (json.loads(data).get("values") or {}).get("rpm")
+        if v is not None:
+            return round(float(v))
+    return None
+
+
 def car_status(conn: sqlite3.Connection, now_ms: int) -> CarStatus:
     # health / obd_trace / diag are app bookkeeping: they must not move "last data"
     last_ts = conn.execute(f"SELECT MAX(ts) FROM records WHERE {DRIVING_SQL}").fetchone()[0]

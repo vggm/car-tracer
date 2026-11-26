@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.alerts import compute_alerts, recent_count
 from app import db as db_mod
 from app import journeys as journeys_mod
+from app import location as location_mod
 from app.panel import stats
 from app.trips import get_trip, parse_trip_ts, range_trips
 
@@ -156,3 +157,21 @@ def alerts(request: Request) -> dict:
     db = state.readers.get()
     found = _alerts(state, db)
     return {"alerts": [asdict(a) for a in found]}
+
+
+@router.get("/location")
+def location(request: Request) -> dict:
+    state = request.app.state
+    db = state.readers.get()
+    now = state.clock()
+    st = location_mod.car_status(db, now)
+    p = st.point
+    return {
+        "state": st.state,
+        "now": now,
+        "last_ts": st.last_ts,
+        "point": None if p is None else {"ts": p.ts, "lat": p.lat, "lon": p.lon, "acc_m": p.acc_m},
+        "speed_kmh": None if st.speed_kmh is None else round(st.speed_kmh, 1),
+        "engine_on": st.engine_on,
+        "rpm": None if st.last_ts is None else location_mod.latest_rpm(db, st.last_ts),
+    }
