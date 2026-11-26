@@ -5,6 +5,7 @@ import { getAlerts } from "./api.js";
 import * as overview from "./overview.js";
 import * as trips from "./trips.js";
 import * as trip from "./trip.js";
+import * as location_ from "./location.js";
 import * as dtc from "./dtc.js";
 import * as alerts from "./alerts.js";
 import { readSeen, WEEK } from "./alerts.js";
@@ -14,6 +15,7 @@ const routes = [
   { re: /^\/trayectos(?:\/(\d{4}-\d{2}))?$/, view: trips },
   { re: /^\/trayecto\/([^/]+)$/, view: trip },
   { re: /^\/viaje\/(v\d+)$/, view: trip },
+  { re: /^\/ubicacion$/, view: location_ },
   { re: /^\/averias$/, view: dtc },
   { re: /^\/avisos$/, view: alerts },
 ];
