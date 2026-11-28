@@ -190,9 +190,11 @@ export async function render(main, params, query) {
       if (range) for (const u of charts) u.setScale("x", range);
     };
 
+    let mapCard = null, chipsEl = null;
     if (pts.length) {
       const mapEl = el("div", { class: "trip-map", role: "img", "aria-label": isJourney ? "Mapa del viaje" : "Mapa del trayecto" });
-      main.append(el("div", { class: "card map-card" }, mapEl));
+      mapCard = el("div", { class: "card map-card" }, mapEl);
+      main.append(mapCard);
       map = L.map(mapEl, { zoomControl: true, attributionControl: true, maxZoom: 19 });
       const thisMap = map;
       addBasemap(thisMap, () => map === thisMap).then((b) => {
@@ -260,8 +262,13 @@ export async function render(main, params, query) {
         icon: L.divIcon({ className: "seg-end", iconSize: [22, 26], iconAnchor: [2, 25], html: flag }),
         keyboard: false, zIndexOffset: 1000,
       }).addTo(map).bindTooltip(`Llegada ${hhmm(last[2])}`);
+      // Panel propio por encima de flechas e insignias (marker pane = 600) para seguir el punto sobre las líneas de colores.
+      map.createPane("cursor");
+      map.getPane("cursor").style.zIndex = 650;
+      map.getPane("cursor").style.pointerEvents = "none";
       marker = L.circleMarker(ll[0], {
-        radius: 6, color: cssVar("--bg"), weight: 3, fillColor: cssVar("--accent"), fillOpacity: 1,
+        pane: "cursor", renderer: L.svg({ pane: "cursor" }), className: "trip-cursor", interactive: false,
+        radius: 8, color: cssVar("--bg"), weight: 3, fillColor: cssVar("--text"), fillOpacity: 1, // --text: contrasta con todas las líneas (un tramo suelto se pinta en --accent)
       });
       fitTo(ll);
       // Cada línea va desplazada LANE_PX píxeles a la derecha de su sentido de marcha; se recalcula al cambiar el zoom.
@@ -301,7 +308,7 @@ export async function render(main, params, query) {
       recolor = () => {
         paintLines();
         if (highlight) highlight.setStyle({ color: cssVar("--accent") });
-        marker.setStyle({ fillColor: cssVar("--accent"), color: cssVar("--bg") });
+        marker.setStyle({ fillColor: cssVar("--text"), color: cssVar("--bg") });
       };
     }
 
@@ -345,7 +352,8 @@ export async function render(main, params, query) {
         ...(i === null ? [] : [el("span", { class: "chip-sw", style: `background: var(${segVar(i, segments.length)})`, "aria-hidden": "true" })]), label);
       chipEls = [mk("Todo", null), ...segments.map((sg, i) =>
         mk(`Tramo ${i + 1} · ${hhmm(sg.start_ts)}–${hhmm(sg.end_ts)} · ${n1(sg.km)} km`, i))];
-      main.append(el("div", { class: "seg-chips", role: "group", "aria-label": "Tramos del viaje" }, chipEls));
+      chipsEl = el("div", { class: "seg-chips", role: "group", "aria-label": "Tramos del viaje" }, chipEls);
+      main.append(chipsEl);
     }
 
     showStats(model.top, { journey: isJourney });
@@ -383,7 +391,10 @@ export async function render(main, params, query) {
       box.append(el("h2", { class: "card-title chart-sub" }, "Refrigerante"), coolBox);
     }
     if (!t.has_obd) box.append(el("p", { class: "chart-note" }, "Sin datos del motor en este trayecto"));
-    main.append(box);
+    // Con datos OBD la gráfica va justo bajo el mapa (y los chips) para que mapa y gráfica quepan juntos en pantalla y se pueda seguir el punto del cursor.
+    const anchor = chipsEl || mapCard;
+    if (t.has_obd && anchor) anchor.after(box);
+    else main.append(box);
 
     const setSelectMode = (on) => {
       selectMode = on;

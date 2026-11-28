@@ -488,6 +488,7 @@ a.mp-btn:hover { background: var(--surface-2); }
 .trip-sub { margin: 0.133rem 0 0; color: var(--muted); font-size: 1.067rem; }
 .map-card { padding: 0.533rem; }
 .trip-map { height: 20rem; border-radius: 0.667rem; }
+.trip-cursor { filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.55)); }
 .trip-stats { row-gap: 1.2rem; }
 .trip-dtcs { list-style: none; margin: 0 0 0.8rem; padding: 0; display: grid; gap: 0.667rem; }
 .dtc-link { color: var(--accent); font-size: 0.933rem; }
